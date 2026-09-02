@@ -64,27 +64,28 @@ public static class ErrorReportService
         sb.AppendLine($"**Exit code:** {exitCode}");
         sb.AppendLine();
 
-        AppendSection(sb, "Error", Sanitize(redactedMessage, extraSecrets), 1200);
-        AppendSection(sb, "install-error.txt", Sanitize(ReadTail(FindErrorReportPath(installDir), 2500), extraSecrets), 2500);
-        AppendSection(sb, "Console tail", Sanitize(consoleTail, extraSecrets), 2500);
-        AppendSection(sb, "hermes-agent-install.log",
-            Sanitize(ReadTail(Path.Combine(HermesHome(), "hermes-agent-install.log"), 2000), extraSecrets), 2000);
+        // Most diagnostic value first: the URL-safe body shrink drops trailing
+        // sections, so gateway logs and the installer error report go first.
+        AppendSection(sb, "install-error.txt", Sanitize(ReadTail(FindErrorReportPath(installDir), 3000), extraSecrets), 3000);
 
-        var logsDir = Path.Combine(HermesHome(), "logs");
         try
         {
-            if (Directory.Exists(logsDir))
+            // Invoke-HermesGatewayCommand writes gateway-<action>.log / -err.log
+            // into the hermes home ROOT (not the logs\ subfolder).
+            var gatewayLogs = Directory.GetFiles(HermesHome(), "gateway-*")
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .Take(4);
+            foreach (var log in gatewayLogs)
             {
-                var gatewayLogs = Directory.GetFiles(logsDir, "gateway*")
-                    .OrderByDescending(File.GetLastWriteTimeUtc)
-                    .Take(2);
-                foreach (var log in gatewayLogs)
-                {
-                    AppendSection(sb, Path.GetFileName(log), Sanitize(ReadTail(log, 1500), extraSecrets), 1500);
-                }
+                AppendSection(sb, Path.GetFileName(log), Sanitize(ReadTail(log, 2000), extraSecrets), 2000);
             }
         }
         catch { }
+
+        AppendSection(sb, "Error", Sanitize(redactedMessage, extraSecrets), 800);
+        AppendSection(sb, "hermes-agent-install.log",
+            Sanitize(ReadTail(Path.Combine(HermesHome(), "hermes-agent-install.log"), 1500), extraSecrets), 1500);
+        AppendSection(sb, "Console tail", Sanitize(consoleTail, extraSecrets), 1500);
 
         return sb.ToString();
     }
