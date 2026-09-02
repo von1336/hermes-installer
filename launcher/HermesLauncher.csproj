@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net6.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>HermesLauncher</AssemblyName>
+    <RootNamespace>HermesLauncher</RootNamespace>
+    <Version>2026.8.31.1</Version>
+    <Authors>Hermes Workspace</Authors>
+    <Description>Hermes Workspace Modern Launcher, Installer, and Service Manager</Description>
+    <ApplicationIcon>..\assets\hermes-setup.ico</ApplicationIcon>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="QRCoder" Version="1.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="..\assets\hermes-logo.png" Link="Assets\hermes-logo.png" />
+    <Resource Include="..\assets\hermes-emblem.png" Link="Assets\hermes-emblem.png" />
+    <Resource Include="..\assets\hermes-setup.ico" Link="Assets\hermes-setup.ico" />
+    <EmbeddedResource Include="..\install-hermes.ps1" LogicalName="install-hermes.ps1" />
+    <EmbeddedResource Include="..\uninstall-hermes.ps1" LogicalName="uninstall-hermes.ps1" Condition="Exists('..\uninstall-hermes.ps1')" />
+    <EmbeddedResource Include="..\lib\InstallComponents.ps1" LogicalName="lib\InstallComponents.ps1" Condition="Exists('..\lib\InstallComponents.ps1')" />
+  </ItemGroup>
+</Project>

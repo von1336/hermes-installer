@@ -1,0 +1,27 @@
+Hermes Workspace Setup (Professional Installer)
+Hermes design profile: dark panel, indigo accent, tailnet-first flow.
+Branding: official Hermes Workspace logo on wizard, setup icon, shortcuts, and connect page.
+
+This wizard installs:
+
+  • Hermes Agent (API gateway on port 8642)
+  • Hermes Workspace web UI (port 3000) + agent dashboard (9119)
+  • Tailscale (recommended) — phone connect via stable 100.x IP
+  • Optional Ollama — local models for Hermes on this PC
+  • Optional MemOS — memory plugin (Local model or Cloud provider)
+  • Optional Obsidian + Obsidian Skills for Hermes Agent
+
+You will choose:
+  1) Install folder — config, logs, connect.html (QR for the Android app)
+  2) Workspace folder — cloned hermes-workspace project (Node/pnpm)
+  3) Components — Tailscale, Ollama, MemOS, Obsidian, firewall, services
+  4) MemOS mode — Local (Ollama) or Provider (OpenAI-compatible API)
+  5) Summary — review before install begins
+
+Requirements: Windows 10/11 x64, internet, winget (Node/Git/Tailscale/Ollama/Obsidian).
+
+Security: connect secrets and API keys are not printed to the console by default.
+Install state is saved to install-meta.json for diagnostics and uninstall.
+
+After install: open the Connect QR page, install Tailscale on your phone
+(same account/tailnet), then scan the QR in the Hermes Android app.
