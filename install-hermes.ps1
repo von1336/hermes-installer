@@ -1189,8 +1189,9 @@ foreach ($key in $health.Keys) {
     Write-Host ("  {0}: {1}" -f $key, $flag) -ForegroundColor $color
 }
 $criticalHealthKeys = @('gateway', 'workspace')
-if ($Script:StartServices -and ($criticalHealthKeys | Where-Object { -not [bool]$health[$_] }).Count -gt 0) {
-    $failed = ($criticalHealthKeys | Where-Object { -not [bool]$health[$_] }) -join ', '
+$failedCritical = @($criticalHealthKeys | Where-Object { -not [bool]$health[$_] })
+if ($Script:StartServices -and $failedCritical.Count -gt 0) {
+    $failed = $failedCritical -join ', '
     throw "Critical post-install health check failed: $failed"
 }
 Write-InstallManifest -Extra $health | Out-Null
