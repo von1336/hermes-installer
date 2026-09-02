@@ -557,11 +557,15 @@ function Invoke-HermesGatewayCommand {
     $env:HERMES_GATEWAY_INSTALL_START_ON_LOGIN = '1'
 
     try {
-        # Use cmd.exe wrapper to properly close stdin (echo. | closes the pipe)
+        # Use cmd.exe wrapper to properly close stdin (echo. | closes the pipe).
+        # Exit code is ALSO written to a file by cmd itself: Start-Process with
+        # redirected streams can lose ExitCode (returns $null) when the child
+        # spawns a detached gateway process and exits before .NET finalizes it.
         $extraArgs = if ($Action -eq 'install') { ' --start-now --start-on-login' } else { '' }
-        $cmdWrapper = "echo. | `"$(Get-NativePath $hermesPath)`" gateway $Action$extraArgs"
+        $codeFile = Join-Path $env:TEMP ("hermes-gw-{0}-{1}.code" -f $Action, [guid]::NewGuid().ToString('N'))
+        $cmdWrapper = "echo. | `"$(Get-NativePath $hermesPath)`" gateway $Action$extraArgs & echo !ERRORLEVEL! > `"$codeFile`""
         $proc = Start-Process -FilePath 'cmd.exe' `
-            -ArgumentList @('/c', $cmdWrapper) `
+            -ArgumentList @('/v:on', '/c', $cmdWrapper) `
             -PassThru -NoNewWindow -Wait:$false `
             -RedirectStandardOutput $outLog `
             -RedirectStandardError $errLog
@@ -579,9 +583,38 @@ function Invoke-HermesGatewayCommand {
             }
         }
 
+        # Flush async stream readers so logs are complete and process info is stable.
+        try { $proc.WaitForExit() } catch { }
+
         $code = $null
-        try { $proc.Refresh(); $code = $proc.ExitCode } catch { $code = $null }
-        $codeText = if ($null -eq $code) { 'unknown' } else { [string]$code }
+        $codeSource = 'process'
+        try {
+            if (Test-Path $codeFile) {
+                $codeText = (Get-Content $codeFile -Raw -ErrorAction Stop).Trim()
+                if ($codeText -match '^\d+$') { $code = [int]$codeText; $codeSource = 'codefile' }
+            }
+        } catch { }
+        try { Remove-Item $codeFile -Force -ErrorAction SilentlyContinue } catch { }
+        if ($null -eq $code) {
+            try { $proc.Refresh(); $code = $proc.ExitCode } catch { $code = $null }
+        }
+        if ($null -eq $code) {
+            # Last resort: judge by the logs. Upstream prints a traceback on failure
+            # and 'Next steps' / 'Gateway started' on success (incl. Startup-folder fallback).
+            $outText = ''
+            $errText = ''
+            try { $outText = Get-Content $outLog -Raw -Encoding UTF8 -ErrorAction Stop } catch { }
+            try { $errText = Get-Content $errLog -Raw -Encoding UTF8 -ErrorAction Stop } catch { }
+            $codeSource = 'logs'
+            if ($errText -match 'Traceback' -or $errText -match 'RuntimeError') {
+                $code = 1
+            } elseif ($outText -match 'Next steps' -or $outText -match 'Gateway started') {
+                $code = 0
+            } else {
+                $code = 1
+            }
+        }
+        $codeText = if ($codeSource -eq 'logs') { "$code (from logs)" } else { [string]$code }
         return [pscustomobject]@{
             Succeeded = ($code -eq 0)
             TimedOut  = $false
@@ -1081,8 +1114,8 @@ if ($Script:StartServices) {
                     -Details @{ installExit = $gwInstall.ExitCode; installErrLog = $gwInstall.ErrLog }
                 $gwOutTail = ''
                 $gwErrTail = ''
-                try { if ($gwInstall.OutLog -and (Test-Path $gwInstall.OutLog)) { $gwOutTail = (Get-Content $gwInstall.OutLog -Tail 25 -ErrorAction Stop) -join "`n" } } catch { }
-                try { if ($gwInstall.ErrLog -and (Test-Path $gwInstall.ErrLog)) { $gwErrTail = (Get-Content $gwInstall.ErrLog -Tail 25 -ErrorAction Stop) -join "`n" } } catch { }
+                try { if ($gwInstall.OutLog -and (Test-Path $gwInstall.OutLog)) { $gwOutTail = (Get-Content $gwInstall.OutLog -Tail 25 -Encoding UTF8 -ErrorAction Stop) -join "`n" } } catch { }
+                try { if ($gwInstall.ErrLog -and (Test-Path $gwInstall.ErrLog)) { $gwErrTail = (Get-Content $gwInstall.ErrLog -Tail 25 -Encoding UTF8 -ErrorAction Stop) -join "`n" } } catch { }
                 $gwDetail = "Required component 'gateway' install failed (exit $($gwInstall.ExitCode)). See: $($gwInstall.ErrLog)"
                 if ($gwOutTail) { $gwDetail += "`n--- gateway install output (tail) ---`n$gwOutTail" }
                 if ($gwErrTail) { $gwDetail += "`n--- gateway install stderr (tail) ---`n$gwErrTail" }
