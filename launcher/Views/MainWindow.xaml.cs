@@ -371,6 +371,28 @@ public partial class MainWindow : Window
 
     private void BtnWizardNext_Click(object sender, RoutedEventArgs e) => ViewModel?.NextSetupWizardStep();
 
+    private async void BtnCheckUpdates_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel != null)
+        {
+            await ViewModel.CheckForUpdatesAsync(userInitiated: true);
+        }
+    }
+
+    private void BtnApplyUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel == null) { return; }
+        var res = MessageBox.Show(
+            "The launcher will close, replace itself with the downloaded update and start again.\r\n\r\nProceed?",
+            "Apply Launcher Update",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (res == MessageBoxResult.Yes && ViewModel.TryApplyPendingUpdate())
+        {
+            Application.Current.Shutdown();
+        }
+    }
+
     private void BtnWizardBack_Click(object sender, RoutedEventArgs e) => ViewModel?.PrevSetupWizardStep();
 
     private void BtnWizardPrev_Click(object sender, RoutedEventArgs e) => ViewModel?.PrevSetupWizardStep();

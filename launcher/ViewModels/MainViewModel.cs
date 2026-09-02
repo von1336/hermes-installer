@@ -42,9 +42,16 @@ public class MainViewModel : INotifyPropertyChanged, ISecretCommands
     private readonly ServiceMonitor _monitor;
     private readonly InstallerRunnerService _installerRunner;
     private readonly SystemDiagnosticsService _diagnosticsService;
+    private readonly UpdateService _updateService = new();
     private readonly DispatcherTimer _autoRefreshTimer;
     private readonly DispatcherTimer _secondTimer;
     private readonly DateTime _appStartTime = DateTime.UtcNow;
+
+    // Launcher self-update
+    private bool _updateCheckRunning;
+    private bool _isUpdateReady;
+    private string _updateStatusText = "";
+    private string _pendingUpdatePath = "";
 
     // Navigation & State
     private int _selectedTabIndex;
@@ -135,6 +142,20 @@ public class MainViewModel : INotifyPropertyChanged, ISecretCommands
     {
         get => _systemStatusSummary;
         set { _systemStatusSummary = value; OnPropertyChanged(); }
+    }
+
+    public string LauncherVersionText => "Launcher v" + UpdateService.CurrentVersionText;
+
+    public string UpdateStatusText
+    {
+        get => _updateStatusText;
+        set { _updateStatusText = value; OnPropertyChanged(); }
+    }
+
+    public bool IsUpdateReady
+    {
+        get => _isUpdateReady;
+        set { _isUpdateReady = value; OnPropertyChanged(); }
     }
 
     public bool IsSystemHealthy
@@ -554,11 +575,72 @@ public class MainViewModel : INotifyPropertyChanged, ISecretCommands
         RefreshAvailableLogs();
         LoadEnvEditor();
         _ = RefreshDiagnosticsAsync();
+        _ = CheckForUpdatesAsync(false);
     }
 
     public async Task RefreshDiagnosticsAsync()
     {
         await _diagnosticsService.RunDiagnosticsAsync(InstallDir, WorkspaceDir);
+    }
+
+    public async Task CheckForUpdatesAsync(bool userInitiated)
+    {
+        if (_updateCheckRunning || IsInstalling) { return; }
+        _updateCheckRunning = true;
+        try
+        {
+            IsUpdateReady = false;
+            UpdateStatusText = "Checking for launcher updates...";
+            var info = await _updateService.CheckAsync();
+            if (info.Error != null)
+            {
+                UpdateStatusText = "";
+                if (userInitiated) { ShowToast(info.Error); }
+                return;
+            }
+            if (!info.IsNewer)
+            {
+                UpdateStatusText = "";
+                if (userInitiated) { ShowToast($"Launcher is up to date (v{UpdateService.CurrentVersionText})"); }
+                return;
+            }
+
+            UpdateStatusText = $"Downloading update v{info.LatestVersion}...";
+            var progress = new Progress<int>(pct => UpdateStatusText = $"Downloading update v{info.LatestVersion}... {pct}%");
+            var target = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "hermes", "updates", $"HermesLauncher-v{info.LatestVersion}.exe");
+            await _updateService.DownloadAsync(info, target, progress);
+
+            _pendingUpdatePath = target;
+            IsUpdateReady = true;
+            UpdateStatusText = $"Update v{info.LatestVersion} ready - click \"Apply update\" to restart";
+            ShowToast($"Launcher update v{info.LatestVersion} downloaded!");
+        }
+        catch (Exception ex)
+        {
+            UpdateStatusText = "";
+            if (userInitiated) { ShowToast("Update failed: " + ex.Message); }
+        }
+        finally
+        {
+            _updateCheckRunning = false;
+        }
+    }
+
+    public bool TryApplyPendingUpdate()
+    {
+        if (!IsUpdateReady || string.IsNullOrEmpty(_pendingUpdatePath) || !File.Exists(_pendingUpdatePath))
+        {
+            return false;
+        }
+        if (IsInstalling)
+        {
+            ShowToast("Wait for the current installation to finish before updating.");
+            return false;
+        }
+        _updateService.ApplyAndRestart(_pendingUpdatePath);
+        return true;
     }
 
     private void ApplyPresetDefaults(string preset)

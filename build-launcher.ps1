@@ -6,6 +6,8 @@ if (-not $InstallerDir) { $InstallerDir = Split-Path -Parent $MyInvocation.MyCom
 
 $Proj = Join-Path $InstallerDir 'launcher\HermesLauncher.csproj'
 $OutDir = Join-Path $InstallerDir 'dist'
+$VersionFile = Join-Path $InstallerDir 'version.txt'
+$AppVersion = if (Test-Path $VersionFile) { (Get-Content $VersionFile -Raw).Trim() } else { '' }
 
 if (-not (Test-Path $Proj)) { throw "Project file not found: $Proj" }
 
@@ -14,8 +16,12 @@ Get-Process -Name 'HermesLauncher' -ErrorAction SilentlyContinue | Stop-Process 
 Start-Sleep -Milliseconds 300
 
 Write-Host "Building Hermes Modern Launcher (WPF Single-File EXE)..." -ForegroundColor Cyan
+if ($AppVersion) { Write-Host "Version: $AppVersion" -ForegroundColor Cyan }
 
 New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
+
+$versionArgs = @()
+if ($AppVersion) { $versionArgs = @("-p:Version=$AppVersion") }
 
 Push-Location (Join-Path $InstallerDir 'launcher')
 try {
@@ -26,6 +32,7 @@ try {
         -p:PublishSingleFile=true `
         -p:IncludeNativeLibrariesForSelfExtract=true `
         -p:EnableCompressionInSingleFile=true `
+        @versionArgs `
         -o $OutDir
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
 } finally {

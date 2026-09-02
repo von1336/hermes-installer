@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-launcher:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+
+      - name: Build HermesLauncher (single-file)
+        shell: pwsh
+        run: |
+          $ver = "${GITHUB_REF_NAME}".TrimStart('v')
+          Write-Host "Building version $ver"
+          dotnet publish launcher/HermesLauncher.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true `
+            -p:Version=$ver `
+            -o dist
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          (Get-FileHash dist/HermesLauncher.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii dist/HermesLauncher.exe.sha256
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/HermesLauncher.exe
+            dist/HermesLauncher.exe.sha256
+          generate_release_notes: true

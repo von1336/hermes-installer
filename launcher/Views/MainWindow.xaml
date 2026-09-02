@@ -192,11 +192,19 @@
                                     </Border>
                                 </UniformGrid>
                             </StackPanel>
-                            <WrapPanel Grid.Column="1" VerticalAlignment="Top" Margin="18,0,0,0">
-                                <Button Content="Start All" Style="{StaticResource HermesPrimaryButton}" Click="BtnStartAll_Click" Margin="0,0,8,8" AutomationProperties.Name="Start all services" />
-                                <Button Content="Restart All" Style="{StaticResource HermesSecondaryButton}" Click="BtnRestartAll_Click" Margin="0,0,8,8" AutomationProperties.Name="Restart all services" />
-                                <Button Content="Stop All" Style="{StaticResource HermesDangerButton}" Click="BtnStopAll_Click" AutomationProperties.Name="Stop all services" />
-                            </WrapPanel>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Top" Margin="18,0,0,0">
+                                <WrapPanel HorizontalAlignment="Right">
+                                    <Button Content="Start All" Style="{StaticResource HermesPrimaryButton}" Click="BtnStartAll_Click" Margin="0,0,8,8" AutomationProperties.Name="Start all services" />
+                                    <Button Content="Restart All" Style="{StaticResource HermesSecondaryButton}" Click="BtnRestartAll_Click" Margin="0,0,8,8" AutomationProperties.Name="Restart all services" />
+                                    <Button Content="Stop All" Style="{StaticResource HermesDangerButton}" Click="BtnStopAll_Click" Margin="0,0,8,8" AutomationProperties.Name="Stop all services" />
+                                </WrapPanel>
+                                <WrapPanel HorizontalAlignment="Right">
+                                    <Button Content="Check updates" Style="{StaticResource HermesSecondaryButton}" Click="BtnCheckUpdates_Click" Margin="0,0,8,8" AutomationProperties.Name="Check for launcher updates" />
+                                    <Button Content="Apply update" Style="{StaticResource HermesPrimaryButton}" Visibility="{Binding IsUpdateReady, Converter={StaticResource BoolToVisibilityConverter}}" Click="BtnApplyUpdate_Click" Margin="0,0,8,8" AutomationProperties.Name="Apply downloaded launcher update and restart" />
+                                </WrapPanel>
+                                <TextBlock Text="{Binding LauncherVersionText}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" HorizontalAlignment="Right" />
+                                <TextBlock Text="{Binding UpdateStatusText}" FontSize="11" Foreground="{StaticResource AccentPrimaryBrush}" HorizontalAlignment="Right" TextWrapping="Wrap" MaxWidth="320" AutomationProperties.LiveSetting="Polite" />
+                            </StackPanel>
                         </Grid>
                     </Border>
 
