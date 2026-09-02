@@ -914,6 +914,29 @@ public class MainViewModel : INotifyPropertyChanged, ISecretCommands
     }
 
     private bool _lastOperationWasUninstall;
+    private int _lastFailedExitCode;
+    private string _lastFailedMessage = "";
+
+    // TEMPORARY debug feature: sends a sanitized failure report to GitHub Issues.
+    public void SendErrorReportToGitHub(bool auto = false)
+    {
+        var label = _lastOperationWasUninstall ? "Uninstall" : "Installation";
+        var consoleTail = InstallerLogText ?? "";
+        if (consoleTail.Length > 2500)
+            consoleTail = consoleTail.Substring(consoleTail.Length - 2500);
+
+        ErrorReportService.SendFailureReport(
+            label,
+            _lastFailedExitCode,
+            _lastFailedMessage,
+            InstallDir,
+            consoleTail,
+            new[] { ProviderApiKey });
+
+        ShowToast(auto
+            ? "Error report opened in browser — press Submit to send it."
+            : "Report copied to clipboard and opened in browser.");
+    }
 
     public async Task StartInstallAsync(bool isCleanReinstall = false)
     {
@@ -1098,6 +1121,11 @@ public class MainViewModel : INotifyPropertyChanged, ISecretCommands
             CurrentStepTitle = $"{(_lastOperationWasUninstall ? "Uninstall" : "Installation")} Failed (Exit Code: {result.ExitCode})";
             IsInstalled = HermesConfigService.IsHermesInstalled(InstallDir, WorkspaceDir);
             if (!_lastOperationWasUninstall) LoadInstallErrorReport();
+
+            // TEMPORARY debug feature: auto-report failures to GitHub Issues.
+            _lastFailedExitCode = result.ExitCode;
+            _lastFailedMessage = result.RedactedMessage;
+            SendErrorReportToGitHub(auto: true);
         }
         RefreshAvailableLogs();
         _ = RefreshDiagnosticsAsync();

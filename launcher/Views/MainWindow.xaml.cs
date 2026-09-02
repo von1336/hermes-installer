@@ -411,6 +411,8 @@ public partial class MainWindow : Window
 
     private void BtnOpenErrorReport_Click(object sender, RoutedEventArgs e) => ViewModel?.OpenInstallErrorReport();
 
+    private void BtnSendErrorReport_Click(object sender, RoutedEventArgs e) => ViewModel?.SendErrorReportToGitHub();
+
     private async void BtnRetryInstall_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel != null)
