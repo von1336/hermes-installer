@@ -53,15 +53,22 @@ function Test-HermesOwnedProcess {
 }
 
 Write-Host '  Stopping Hermes services...' -ForegroundColor Yellow
-foreach ($cmd in @(
-    @{ exe = 'hermes'; args = 'gateway stop' },
-    @{ exe = 'hermes'; args = 'dashboard stop' }
-)) {
-    try {
-        if (Get-Command $cmd.exe -ErrorAction SilentlyContinue) {
-            Start-Process -FilePath $cmd.exe -ArgumentList $cmd.args -Wait -NoNewWindow -ErrorAction SilentlyContinue
-        }
-    } catch { }
+# hermes CLI may be missing from this process's PATH (user PATH changes don't
+# propagate to already-running parents) - probe the staged bin/ copy directly.
+$hermesExe = $null
+if (Get-Command hermes -ErrorAction SilentlyContinue) {
+    $hermesExe = 'hermes'
+} else {
+    foreach ($cand in @((Join-Path $hermesHome 'bin\hermes.exe'), (Join-Path $hermesHome 'bin\hermes.cmd'))) {
+        if (Test-Path -LiteralPath $cand) { $hermesExe = $cand; break }
+    }
+}
+if ($hermesExe) {
+    foreach ($args in @('gateway stop', 'dashboard stop')) {
+        try {
+            Start-Process -FilePath $hermesExe -ArgumentList $args -Wait -NoNewWindow -ErrorAction SilentlyContinue
+        } catch { }
+    }
 }
 
 # Stop port owners only when Hermes ownership is confirmed (PID/exe/cmdline evidence).
@@ -80,6 +87,31 @@ foreach ($port in @(3000, 8642, 9119, 11434)) {
             }
         }
     } catch { }
+}
+
+# Stop ALL Hermes-owned processes (exe/cmdline inside hermes home or workspace),
+# not just port owners: gateway/workspace child processes keep log files inside
+# %LOCALAPPDATA%\hermes open, which blocks folder removal later.
+# This uninstaller's own process chain is excluded (its cmdline references
+# launcher-tmp/embedded-installer inside the same folder).
+$selfChain = @{}
+$curPid = $PID
+while ($curPid) {
+    $selfChain[[int]$curPid] = $true
+    $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$curPid" -ErrorAction SilentlyContinue
+    if ($parent -and $parent.ParentProcessId -and -not $selfChain.ContainsKey([int]$parent.ParentProcessId)) {
+        $curPid = [int]$parent.ParentProcessId
+    } else {
+        break
+    }
+}
+foreach ($p in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
+    $pidN = [int]$p.ProcessId
+    if ($pidN -le 4 -or $selfChain.ContainsKey($pidN)) { continue }
+    if (Test-HermesOwnedProcess -ProcessId $pidN) {
+        Stop-Process -Id $pidN -Force -ErrorAction SilentlyContinue
+        Write-Host "  Stopped Hermes-owned process pid=$pidN ($($p.Name))"
+    }
 }
 
 foreach ($name in @('HermesDashboard', 'HermesWorkspace', 'HermesGateway')) {
@@ -194,7 +226,26 @@ if ($RemoveAllData -or $RemoveObsidianSkills) {
 if ($RemoveAllData) {
     if (Test-Path $hermesHome) {
         Write-Host "  Removing install home: $hermesHome" -ForegroundColor Yellow
-        Remove-Item $hermesHome -Recurse -Force -ErrorAction SilentlyContinue
+        $removed = $false
+        for ($attempt = 0; $attempt -lt 3 -and -not $removed; $attempt++) {
+            try {
+                Remove-Item $hermesHome -Recurse -Force -ErrorAction Stop
+            } catch {
+                Start-Sleep -Seconds 2
+            }
+            $removed = -not (Test-Path $hermesHome)
+        }
+        if ($removed) {
+            Write-Host "  Removed: $hermesHome" -ForegroundColor Green
+        } else {
+            $left = @(Get-ChildItem $hermesHome -Recurse -Force -ErrorAction SilentlyContinue)
+            Write-Host "  WARNING: $hermesHome was not fully removed ($($left.Count) items remain)." -ForegroundColor Yellow
+            Write-Host '  Some files are still locked by running processes. Open Task Manager and end' -ForegroundColor Yellow
+            Write-Host '  hermes/python/node processes referencing hermes paths, then delete the folder manually.' -ForegroundColor Yellow
+            $left | Select-Object -First 10 | ForEach-Object {
+                Write-Host "    left: $($_.FullName)" -ForegroundColor DarkGray
+            }
+        }
     }
 } else {
     Write-Host '  Kept %LOCALAPPDATA%\hermes (logs, connect.html, .env, install-meta.json).' -ForegroundColor DarkGray
