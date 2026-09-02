@@ -21,7 +21,7 @@ jobs:
       - name: Build HermesLauncher (single-file)
         shell: pwsh
         run: |
-          $ver = "${GITHUB_REF_NAME}".TrimStart('v')
+          $ver = "$env:GITHUB_REF_NAME".TrimStart('v')
           Write-Host "Building version $ver"
           dotnet publish launcher/HermesLauncher.csproj `
             -c Release `
