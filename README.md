@@ -1,49 +1,51 @@
-# Hermes Windows Modern Launcher & Installer
+# Hermes Windows Launcher & Installer
 
-## 🚀 Hermes Modern Launcher (Recommended)
+Современный лаунчер и установщик компонентов рабочей среды Hermes для Windows на базе WPF (.NET).
 
-Single-file modern WPF desktop application (`HermesLauncher.exe`) featuring a dark theme matching Hermes Workspace:
-- **📊 Real-time Dashboard:** Monitor and Start/Stop/Restart all services (Gateway `:8642`, Workspace `:3000`, Agent Dashboard `:9119`, Ollama `:11434`).
-- **📲 Live Connect QR:** Native in-app QR code generation, deep link copy, 1-click token regeneration (24h, 7d, 30d, permanent), and expiry tracker.
-- **⚡ Setup Wizard:** Integrated installer with component selection, custom paths, live progress bar, and real-time terminal output.
-- **📜 Logs & Console:** Multi-file log viewer for troubleshooting.
+## Современный графический лаунчер Hermes
 
-### Build Launcher:
+Автономное десктопное приложение для Windows (`HermesLauncher.exe`) в тёмной теме, соответствующей стилю Hermes Workspace:
+- **Панель мониторинга в реальном времени:** отслеживание статуса и управление службами (запуск, остановка, перезапуск) — Gateway (`:8642`), Workspace (`:3000`), Agent Dashboard (`:9119`), Ollama (`:11434`).
+- **Генерация QR-кода для прямого подключения:** встроенная генерация QR-кода в приложении, копирование deep link, перевыпуск токена в один клик (24 часа, 7 дней, 30 дней, бессрочный) и отслеживание срока действия.
+- **Мастер установки:** встроенный установщик с выбором компонентов, настройкой путей, прогресс-баром и терминальным выводом в реальном времени.
+- **Журналы и консоль:** встроенный просмотрщик логов для диагностики и отладки.
+
+### Сборка лаунчера:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\installer\build-launcher.ps1
 ```
 
-Executable output:
+Исполняемый файл:
 ```
 installer\dist\HermesLauncher.exe
 ```
 
 ---
 
-## 🛠️ Alternative Installers
+## Альтернативные сценарии установки
 
-1. **Inno Setup Wizard (Legacy GUI):**
+1. **Мастер Inno Setup (классический графический установщик):**
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File .\installer\build-setup.ps1
-   # Output: installer\dist\HermesWorkspaceSetup.exe
+   # Результат: installer\dist\HermesWorkspaceSetup.exe
    ```
-2. **Direct CLI Script:**
+2. **Прямой сценарий командной строки PowerShell:**
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File .\installer\install-hermes.ps1
    ```
-3. **Console EXE Wrapper:**
+3. **Консольный EXE-модуль:**
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File .\installer\build-exe.ps1
-   # Output: installer\dist\HermesInstaller.exe
+   # Результат: installer\dist\HermesInstaller.exe
    ```
 
 ---
 
-## 📦 What is Installed & Managed
+## Устанавливаемые и управляемые компоненты
 
-- **Hermes Agent (Gateway on `:8642`):** Python OpenAI-compatible API inference server
-- **Hermes Workspace (`:3000`):** Full-stack web dashboard, chat sessions, conductor & file manager
-- **Agent Dashboard (`:9119`):** Channels & node management
-- **Tailscale (100.x CGNAT IP):** Encrypted zero-trust phone-to-PC connection
-- **Ollama (`:11434`):** Local model inference on host GPU/CPU
-- **MemOS & Obsidian Skills (Optional):** Long-term memory and agent capabilities
+- **Hermes Agent (Gateway на `:8642`):** инференс-сервер API на Python, совместимый с форматом OpenAI
+- **Hermes Workspace (`:3000`):** полнофункциональная веб-панель, сессии чата, дирижёр задач и файловый менеджер
+- **Agent Dashboard (`:9119`):** управление каналами и узлами
+- **Tailscale (IP-адрес 100.x CGNAT):** защищённое соединение между смартфоном и ПК с нулевым доверием
+- **Ollama (`:11434`):** локальный запуск языковых моделей на GPU/CPU рабочей станции
+- **Навыки MemOS и Obsidian (опционально):** долговременная память и расширение возможностей агента
