@@ -4,6 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:HermesLauncher.ViewModels"
+        xmlns:controls="clr-namespace:HermesLauncher.Controls"
         mc:Ignorable="d"
         Icon="pack://application:,,,/Assets/hermes-setup.ico"
         Title="Hermes Workspace Manager"
@@ -63,9 +64,28 @@
                             <Ellipse.Style>
                                 <Style TargetType="Ellipse">
                                     <Setter Property="Fill" Value="{StaticResource StatusOnlineBrush}" />
+                                    <Setter Property="Effect">
+                                        <Setter.Value>
+                                            <DropShadowEffect Color="#34D399" BlurRadius="6" ShadowDepth="0" Opacity="0.8" />
+                                        </Setter.Value>
+                                    </Setter>
                                     <Style.Triggers>
+                                        <EventTrigger RoutedEvent="Loaded">
+                                            <BeginStoryboard>
+                                                <Storyboard RepeatBehavior="Forever">
+                                                    <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1.0" To="0.4" Duration="0:0:1.3" AutoReverse="True">
+                                                        <DoubleAnimation.EasingFunction><SineEase EasingMode="EaseInOut" /></DoubleAnimation.EasingFunction>
+                                                    </DoubleAnimation>
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </EventTrigger>
                                         <DataTrigger Binding="{Binding IsSystemHealthy}" Value="False">
                                             <Setter Property="Fill" Value="{StaticResource StatusWarningBrush}" />
+                                            <Setter Property="Effect">
+                                                <Setter.Value>
+                                                    <DropShadowEffect Color="#FBBF24" BlurRadius="6" ShadowDepth="0" Opacity="0.8" />
+                                                </Setter.Value>
+                                            </Setter>
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
@@ -134,17 +154,63 @@
                         <RadioButton Content="Model &amp; Environment" Style="{StaticResource NavTabRadioButton}" IsChecked="{Binding SelectedTabIndex, Converter={StaticResource IntToBoolConverter}, ConverterParameter=4, Mode=TwoWay}" Click="NavTab_Click" Tag="4" AutomationProperties.Name="Navigate to model and environment" />
                     </StackPanel>
 
-                    <Border Grid.Row="2" Margin="14,0,14,18" Style="{StaticResource HermesCard}" Padding="14" AutomationProperties.LiveSetting="Polite" AutomationProperties.Name="Network status">
-                        <StackPanel>
-                            <TextBlock Text="PAIRING NETWORK" Style="{StaticResource SectionEyebrow}" />
-                            <TextBlock Text="{Binding PreferredHost}" FontSize="13" FontFamily="{StaticResource CodeFontFamily}" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" Margin="0,6,0,0" TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding TailscaleStatusText}" FontSize="11" Foreground="{StaticResource TextMutedBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
-                        </StackPanel>
-                    </Border>
+                    <StackPanel Grid.Row="2" Margin="14,0,14,14">
+                        <Border Style="{StaticResource HermesCard}" Padding="12" Margin="0,0,0,10" AutomationProperties.LiveSetting="Polite" AutomationProperties.Name="Network status">
+                            <StackPanel>
+                                <TextBlock Text="PAIRING NETWORK" Style="{StaticResource SectionEyebrow}" />
+                                <TextBlock Text="{Binding PreferredHost}" FontSize="12" FontFamily="{StaticResource CodeFontFamily}" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding TailscaleStatusText}" FontSize="11" Foreground="{StaticResource TextMutedBrush}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource HermesCard}" Padding="12" AutomationProperties.LiveSetting="Polite" AutomationProperties.Name="Launcher update status">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding LauncherVersionText}" Style="{StaticResource SectionEyebrow}" VerticalAlignment="Center" />
+                                    <Button Grid.Column="1" Content="Check" Style="{StaticResource HermesSecondaryButton}" MinHeight="24" Padding="8,2" FontSize="10" Click="BtnCheckUpdates_Click" ToolTip="Check GitHub for launcher updates" AutomationProperties.Name="Check for updates" />
+                                </Grid>
+                                <TextBlock Text="{Binding UpdateStatusText}" FontSize="10" Foreground="{StaticResource AccentPrimaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0" Visibility="{Binding UpdateStatusText, Converter={StaticResource StringEmptyToVisibilityConverter}, ConverterParameter=Inverse}" />
+                                <Button Content="🚀 Restart &amp; Apply" Style="{StaticResource HermesPrimaryButton}" MinHeight="28" Padding="8,4" FontSize="11" Margin="0,6,0,0" Click="BtnApplyUpdate_Click" Visibility="{Binding IsUpdateReady, Converter={StaticResource BoolToVisibilityConverter}}" AutomationProperties.Name="Apply downloaded update and restart" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
                 </Grid>
             </Border>
 
-            <Grid Grid.Column="1" Margin="24" x:Name="ContentHost" Focusable="True" KeyboardNavigation.TabNavigation="Cycle">
+            <Grid Grid.Column="1" ClipToBounds="True">
+                <!-- Shimmering Breathing Aurora Glow -->
+                <Border x:Name="AuroraGlow" IsHitTestVisible="False" Opacity="0.55">
+                    <Border.Background>
+                        <RadialGradientBrush Center="0.8,0.2" GradientOrigin="0.8,0.2" RadiusX="0.75" RadiusY="0.75">
+                            <GradientStop Color="#2238BDF8" Offset="0" />
+                            <GradientStop Color="#0E0284C7" Offset="0.5" />
+                            <GradientStop Color="#00000000" Offset="1" />
+                        </RadialGradientBrush>
+                    </Border.Background>
+                    <Border.Triggers>
+                        <EventTrigger RoutedEvent="Loaded">
+                            <BeginStoryboard>
+                                <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                    <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0.3" To="0.75" Duration="0:0:5">
+                                        <DoubleAnimation.EasingFunction>
+                                            <SineEase EasingMode="EaseInOut" />
+                                        </DoubleAnimation.EasingFunction>
+                                    </DoubleAnimation>
+                                </Storyboard>
+                            </BeginStoryboard>
+                        </EventTrigger>
+                    </Border.Triggers>
+                </Border>
+
+                <!-- Constellation Neural Network Canvas -->
+                <controls:ConstellationCanvas ParticleCount="48" MaxDistance="115" Opacity="0.8" />
+
+                <!-- Content Area -->
+                <Grid Margin="24" x:Name="ContentHost" Focusable="True" KeyboardNavigation.TabNavigation="Cycle">
                 <Grid.Resources>
                     <Style x:Key="PageGridStyle" TargetType="Grid">
                         <Setter Property="Opacity" Value="1" />
@@ -231,17 +297,7 @@
                                                 </StackPanel>
                                                 <Border HorizontalAlignment="Right" Style="{StaticResource StatusPill}" AutomationProperties.LiveSetting="Polite">
                                                     <StackPanel Orientation="Horizontal">
-                                                        <Ellipse Width="8" Height="8" Margin="0,0,7,0" VerticalAlignment="Center">
-                                                            <Ellipse.Style>
-                                                                <Style TargetType="Ellipse">
-                                                                    <Setter Property="Fill" Value="{StaticResource StatusOnlineBrush}" />
-                                                                    <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding IsOnline}" Value="False"><Setter Property="Fill" Value="{StaticResource StatusOfflineBrush}" /></DataTrigger>
-                                                                        <DataTrigger Binding="{Binding IsBusy}" Value="True"><Setter Property="Fill" Value="{StaticResource StatusWarningBrush}" /></DataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </Ellipse.Style>
-                                                        </Ellipse>
+                                                        <Ellipse Style="{StaticResource ServiceStatusDot}" Margin="0,0,7,0" VerticalAlignment="Center" />
                                                         <TextBlock Text="{Binding StatusText}" FontSize="11" FontWeight="Bold">
                                                             <TextBlock.Style>
                                                                 <Style TargetType="TextBlock">
@@ -266,7 +322,12 @@
                                                 </Grid.RowDefinitions>
                                                 <TextBlock Text="{Binding EndpointLabel}" FontFamily="{StaticResource CodeFontFamily}" FontSize="11" Foreground="{StaticResource AccentPrimaryBrush}" TextTrimming="CharacterEllipsis" />
                                                 <TextBlock Grid.Row="1" Text="{Binding DetectedModel, StringFormat='Engine: {0}'}" FontSize="11" Foreground="{StaticResource TextMutedBrush}" TextTrimming="CharacterEllipsis" Margin="0,4,0,0" />
-                                                <TextBlock Grid.Row="2" Text="{Binding LastChecked, StringFormat='Last check: {0}'}" FontSize="11" Foreground="{StaticResource TextMutedBrush}" Margin="0,4,0,0" />
+                                                <TextBlock Grid.Row="2" FontSize="11" Margin="0,4,0,0">
+                                                    <Run Text="Last check: " Foreground="{StaticResource TextMutedBrush}" />
+                                                    <Run Text="{Binding LastChecked, Mode=OneWay}" Foreground="{StaticResource TextMutedBrush}" />
+                                                    <Run Text=" • " Foreground="{StaticResource TextMutedBrush}" />
+                                                    <Run Text="{Binding LatencyMs, Mode=OneWay, StringFormat='{}{0}ms'}" FontWeight="Bold" Foreground="{Binding LatencyMs, Converter={StaticResource LatencyToBrushConverter}}" />
+                                                </TextBlock>
                                             </Grid>
                                             <WrapPanel Grid.Row="3" HorizontalAlignment="Right">
                                                 <Button Content="Open" Style="{StaticResource HermesSecondaryButton}" Margin="0,0,6,6" Tag="{Binding}" Click="BtnOpenBrowser_Click" AutomationProperties.Name="Open service endpoint" />
@@ -368,14 +429,25 @@
 
                     <Border Grid.Row="0" Style="{StaticResource HermesCard}" Margin="0,0,0,14" Padding="16" AutomationProperties.LiveSetting="Polite">
                         <Grid>
-                            <StackPanel>
-                                <TextBlock Text="Install Wizard" Style="{StaticResource PageTitle}" />
-                                <TextBlock Text="Diagnostics → Paths &amp; Components → Provider → Deploy" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,4,0,10" />
-                                <ProgressBar Value="{Binding InstallProgress}" Maximum="1.0" Style="{StaticResource HermesProgressBar}" AutomationProperties.Name="Installation progress" />
-                            </StackPanel>
-                            <Border HorizontalAlignment="Right" VerticalAlignment="Top" Style="{StaticResource StatusPill}">
-                                <TextBlock Text="{Binding CurrentStepTitle}" FontSize="12" FontWeight="Bold" Foreground="{StaticResource AccentPrimaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="360" />
-                            </Border>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="Install Wizard" Style="{StaticResource PageTitle}" />
+                                    <TextBlock Text="Diagnostics → Paths &amp; Components → Provider → Deploy" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,4,0,0" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                    <Border Style="{StaticResource StatusPill}" Margin="0,0,8,0">
+                                        <TextBlock Text="{Binding InstallProgress, Converter={StaticResource DoubleToPercentageConverter}}" FontSize="12" FontFamily="{StaticResource CodeFontFamily}" FontWeight="Bold" Foreground="{StaticResource AccentPrimaryBrush}" />
+                                    </Border>
+                                    <Border Style="{StaticResource StatusPill}">
+                                        <TextBlock Text="{Binding CurrentStepTitle}" FontSize="12" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="320" />
+                                    </Border>
+                                </StackPanel>
+                            </Grid>
+                            <ProgressBar Grid.Row="1" Value="{Binding InstallProgress}" Maximum="1.0" Style="{StaticResource HermesProgressBar}" AutomationProperties.Name="Installation progress" />
                         </Grid>
                     </Border>
 
@@ -411,8 +483,23 @@
                                                         </StackPanel>
                                                         <Border Grid.Column="1" Style="{StaticResource StatusPill}" VerticalAlignment="Center" Margin="10,0,0,0">
                                                             <StackPanel Orientation="Horizontal">
-                                                                <Ellipse Width="8" Height="8" Margin="0,0,6,0" VerticalAlignment="Center">
-                                                                    <Ellipse.Style><Style TargetType="Ellipse"><Setter Property="Fill" Value="{StaticResource StatusOnlineBrush}" /><Style.Triggers><DataTrigger Binding="{Binding IsInstalled}" Value="False"><Setter Property="Fill" Value="{StaticResource StatusOfflineBrush}" /></DataTrigger></Style.Triggers></Style></Ellipse.Style>
+                                                                 <Ellipse Width="8" Height="8" Margin="0,0,6,0" VerticalAlignment="Center">
+                                                                    <Ellipse.Style>
+                                                                        <Style TargetType="Ellipse">
+                                                                            <Setter Property="Fill" Value="{StaticResource StatusOnlineBrush}" />
+                                                                            <Setter Property="Effect">
+                                                                                <Setter.Value><DropShadowEffect Color="#34D399" BlurRadius="5" ShadowDepth="0" Opacity="0.75" /></Setter.Value>
+                                                                            </Setter>
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding IsInstalled}" Value="False">
+                                                                                    <Setter Property="Fill" Value="{StaticResource StatusOfflineBrush}" />
+                                                                                    <Setter Property="Effect">
+                                                                                        <Setter.Value><DropShadowEffect Color="#F87171" BlurRadius="4" ShadowDepth="0" Opacity="0.5" /></Setter.Value>
+                                                                                    </Setter>
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </Ellipse.Style>
                                                                 </Ellipse>
                                                                 <TextBlock Text="{Binding VersionOrStatus}" FontFamily="{StaticResource CodeFontFamily}" FontSize="11" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" />
                                                             </StackPanel>
@@ -507,10 +594,14 @@
                     </Border>
                 </Grid>
 
-                <Border x:Name="ToastHost" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0" Background="{StaticResource BgCardBrush}" BorderBrush="{StaticResource AccentPrimaryBrush}" BorderThickness="1" CornerRadius="14" Padding="14,8" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" AutomationProperties.Name="Notification">
-                    <TextBlock Text="{Binding CopyNotification}" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}" />
+                <Border x:Name="ToastHost" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,12,12,0" Style="{StaticResource ToastCard}" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" AutomationProperties.Name="Notification">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Ellipse Style="{StaticResource PulsingOnlineDot}" Margin="0,0,10,0" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding CopyNotification}" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}" VerticalAlignment="Center" />
+                    </StackPanel>
                 </Border>
             </Grid>
         </Grid>
     </Grid>
+</Grid>
 </Window>

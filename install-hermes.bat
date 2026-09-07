@@ -2,11 +2,12 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 
+set "EXPECTED="
+if exist "%~dp0version.txt" set /p EXPECTED=<"%~dp0version.txt"
+
 echo ========================================
 echo  Hermes installer (NATIVE Windows)
-echo  VERSION banner must show:
-echo    2026-08-30-pro-v9
-echo  Folder: %~dp0
+if defined EXPECTED echo  Expected version: %EXPECTED%
 echo ========================================
 echo.
 
@@ -16,12 +17,14 @@ if not exist "%~dp0install-hermes.ps1" (
   exit /b 1
 )
 
-findstr /C:"2026-08-30-pro-v9" "%~dp0install-hermes.ps1" >nul
-if errorlevel 1 (
-  echo ERROR: This is an OLD install-hermes.ps1
-  echo Delete Telegram copies and use D:\apk\installer\ or HermesWorkspaceSetup.exe
-  pause
-  exit /b 1
+if defined EXPECTED (
+  findstr /C:"%EXPECTED%" "%~dp0install-hermes.ps1" >nul
+  if errorlevel 1 (
+    echo ERROR: install-hermes.ps1 version marker does not match version.txt (%EXPECTED%^).
+    echo Re-download the full installer bundle (HermesWorkspaceSetup.exe recommended^).
+    pause
+    exit /b 1
+  )
 )
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install-hermes.ps1"

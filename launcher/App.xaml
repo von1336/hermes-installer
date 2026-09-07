@@ -13,6 +13,11 @@
             <helpers:IntToVisibilityConverter x:Key="IntToVisibilityConverter" />
             <helpers:InverseBoolConverter x:Key="InverseBoolConverter" />
             <helpers:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+            <helpers:StringToBoolConverter x:Key="StringToBoolConverter" />
+            <helpers:StringToVisibilityConverter x:Key="StringToVisibilityConverter" />
+            <helpers:StringEmptyToVisibilityConverter x:Key="StringEmptyToVisibilityConverter" />
+            <helpers:DoubleToPercentageConverter x:Key="DoubleToPercentageConverter" />
+            <helpers:LatencyToBrushConverter x:Key="LatencyToBrushConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

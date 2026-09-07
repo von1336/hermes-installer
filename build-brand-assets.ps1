@@ -20,12 +20,9 @@ function New-HermesBrush([string]$hex) {
 }
 
 function Resolve-LogoSource {
-    $workspaceLogo = Join-Path $PSScriptRoot '..\assets\c__Users_vona_AppData_Roaming_Cursor_User_workspaceStorage_1c1a964682c110e7f668c093ae74ab86_images_7b2916bd-27d7-493a-a48c-c7ee9a13773c-fbdbc1a4-e123-40ef-8bf7-701f3098adfa.png'
-    $absoluteAttachedLogo = 'C:\Users\vona\.cursor\projects\d-apk/assets/c__Users_vona_AppData_Roaming_Cursor_User_workspaceStorage_1c1a964682c110e7f668c093ae74ab86_images_7b2916bd-27d7-493a-a48c-c7ee9a13773c-fbdbc1a4-e123-40ef-8bf7-701f3098adfa.png'
+    # Portable sources only: explicit env override or a repo-local file.
     $candidates = @(
         $env:HERMES_LOGO_SOURCE,
-        $workspaceLogo,
-        $absoluteAttachedLogo,
         (Join-Path $assetsDir 'hermes-logo.source.png')
     )
     foreach ($candidate in $candidates) {

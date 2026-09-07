@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -77,6 +78,7 @@ public class InstallerRunnerService
         // clear current slot, then publish the result so retry is safe afterwards.
         try { op.Dispose(); } catch { }
         if (launchScript != null) TryDeleteFile(launchScript);
+        if (!string.IsNullOrEmpty(op.TempDirectoryToClean)) TryDeleteDirectory(op.TempDirectoryToClean);
         CleanupLegacyTempScripts();
         lock (_sync)
         {
@@ -109,23 +111,29 @@ public class InstallerRunnerService
 
     private async Task<string?> ExecuteOperationAsync(InstallOperation op)
     {
-        string? launchScript = null;
-
-        if (op.IsCleanReinstall)
+        if (op.IsCleanReinstall || op.IsUninstall)
         {
-            RaiseStep(op, "cleanup", "Terminating running services for clean install...", 0.02);
-            RaiseLog(op, "[CLEAN REINSTALL] Stopping Hermes-owned processes (registry verified)...");
+            RaiseStep(op, "cleanup", op.IsUninstall ? "Stopping Hermes services..." : "Terminating running services for clean install...", 0.02);
+            RaiseLog(op, $"[{(op.IsUninstall ? "UNINSTALL" : "CLEAN REINSTALL")}] Stopping Hermes-owned processes (registry verified)...");
             var diag = new StringBuilder();
             var stopped = ProcessOwnershipRegistry.StopAllOwned(op.Settings.InstallDir, op.Settings.WorkspaceDir, diag);
-            RaiseLog(op, $"[CLEAN REINSTALL] stopped={stopped} {diag}");
+            RaiseLog(op, $"[{(op.IsUninstall ? "UNINSTALL" : "CLEAN REINSTALL")}] stopped={stopped} {diag}");
             await Task.Delay(1000);
         }
 
+        if (op.IsUninstall)
+        {
+            return await ExecuteUninstallAsync(op);
+        }
+
+        return await ExecuteInstallAsync(op);
+    }
+
+    private async Task<string?> ExecuteInstallAsync(InstallOperation op)
+    {
         var installScript = EnsureInstallerFilesExtracted();
         var scriptDir = Path.GetDirectoryName(installScript)!;
-        launchScript = op.IsUninstall
-            ? WriteUninstallLaunchScript(scriptDir)
-            : WriteLaunchScript(op.Settings, installScript);
+        var launchScript = WriteLaunchScript(op.Settings, installScript);
         op.LaunchScriptPath = launchScript;
 
         var psi = new ProcessStartInfo
@@ -152,6 +160,43 @@ public class InstallerRunnerService
         return launchScript;
     }
 
+    private async Task<string?> ExecuteUninstallAsync(InstallOperation op)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"hermes-uninstall-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        op.TempDirectoryToClean = tempDir;
+
+        var uninstallScript = ExtractUninstallScript(tempDir);
+        var launchScript = WriteUninstallLaunchScript(tempDir, uninstallScript, op.Settings.InstallDir);
+        op.LaunchScriptPath = launchScript;
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "powershell.exe",
+            WorkingDirectory = Path.GetTempPath(),
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8
+        };
+        psi.ArgumentList.Add("-NoProfile");
+        psi.ArgumentList.Add("-ExecutionPolicy");
+        psi.ArgumentList.Add("Bypass");
+        psi.ArgumentList.Add("-File");
+        psi.ArgumentList.Add(launchScript);
+
+        await Task.Run(() => RunChildProcess(op, psi), CancellationToken.None);
+
+        if (op.Result?.FinalState == InstallationState.Completed)
+        {
+            await PostUninstallCleanupAsync(op);
+        }
+
+        return launchScript;
+    }
+
     private void RunChildProcess(InstallOperation op, ProcessStartInfo psi)
     {
         Process? process = null;
@@ -168,8 +213,11 @@ public class InstallerRunnerService
                 return;
             }
             op.AttachProcess(process);
-            ProcessOwnershipRegistry.Register(process.Id, null, "powershell -File " + op.LaunchScriptPath,
-                psi.WorkingDirectory, op.Settings.InstallDir, op.Settings.WorkspaceDir, "installer-launch");
+            if (!op.IsUninstall)
+            {
+                ProcessOwnershipRegistry.Register(process.Id, null, "powershell -File " + op.LaunchScriptPath,
+                    psi.WorkingDirectory, op.Settings.InstallDir, op.Settings.WorkspaceDir, "installer-launch");
+            }
 
             using var cancelRegistration = op.Cts.Token.Register(() =>
             {
@@ -238,7 +286,7 @@ public class InstallerRunnerService
         }
         finally
         {
-            try { if (process != null) ProcessOwnershipRegistry.Unregister(process.Id); } catch { }
+            try { if (process != null && !op.IsUninstall) ProcessOwnershipRegistry.Unregister(process.Id); } catch { }
             try { process?.Dispose(); } catch { }
         }
     }
@@ -315,6 +363,19 @@ public class InstallerRunnerService
         try { File.Delete(path); } catch { }
     }
 
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                ClearAttributesRecursive(new DirectoryInfo(path));
+                Directory.Delete(path, true);
+            }
+        }
+        catch { }
+    }
+
     // Remove leftover launch scripts from older launcher versions (may contain secrets).
     private static void CleanupLegacyTempScripts()
     {
@@ -324,6 +385,8 @@ public class InstallerRunnerService
                 TryDeleteFile(f);
             foreach (var f in Directory.GetFiles(Path.GetTempPath(), "hermes-launcher-uninstall-*.ps1"))
                 TryDeleteFile(f);
+            foreach (var d in Directory.GetDirectories(Path.GetTempPath(), "hermes-uninstall-*"))
+                TryDeleteDirectory(d);
         }
         catch { }
     }
@@ -385,32 +448,178 @@ public class InstallerRunnerService
         return launchPath;
     }
 
-    private static string WriteUninstallLaunchScript(string scriptDir)
+    private static string ExtractUninstallScript(string tempDir)
     {
-        var uninstallScript = Path.Combine(scriptDir, "uninstall-hermes.ps1");
-        if (!File.Exists(uninstallScript))
-            throw new FileNotFoundException("uninstall-hermes.ps1 not found after extract.", uninstallScript);
+        var targetPath = Path.Combine(tempDir, "uninstall-hermes.ps1");
+        var utf8NoBom = new UTF8Encoding(false);
 
-        var launchDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "hermes", "launcher-tmp");
-        Directory.CreateDirectory(launchDir);
-        var launchPath = Path.Combine(launchDir, $"hermes-launcher-uninstall-{Guid.NewGuid():N}.ps1");
+        // 1. Try disk files (base dir or dev dir)
+        var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        var candDisk = Path.Combine(baseDir, "uninstall-hermes.ps1");
+        if (File.Exists(candDisk))
+        {
+            File.WriteAllText(targetPath, File.ReadAllText(candDisk, Encoding.UTF8), utf8NoBom);
+            return targetPath;
+        }
+
+        var devCand = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "uninstall-hermes.ps1"));
+        if (File.Exists(devCand))
+        {
+            File.WriteAllText(targetPath, File.ReadAllText(devCand, Encoding.UTF8), utf8NoBom);
+            return targetPath;
+        }
+
+        // 2. Embedded resource in assembly
+        var asm = Assembly.GetExecutingAssembly();
+        foreach (var name in asm.GetManifestResourceNames())
+        {
+            if (name.EndsWith("uninstall-hermes.ps1", StringComparison.OrdinalIgnoreCase))
+            {
+                using var stream = asm.GetManifestResourceStream(name);
+                if (stream != null)
+                {
+                    using var reader = new StreamReader(stream, Encoding.UTF8);
+                    File.WriteAllText(targetPath, reader.ReadToEnd(), utf8NoBom);
+                    return targetPath;
+                }
+            }
+        }
+
+        throw new FileNotFoundException("uninstall-hermes.ps1 not found in resources or on disk.");
+    }
+
+    private static string WriteUninstallLaunchScript(string tempDir, string uninstallScriptPath, string installDir)
+    {
+        var launchPath = Path.Combine(tempDir, $"hermes-launcher-uninstall-{Guid.NewGuid():N}.ps1");
 
         // Full removal: services, tasks, firewall rules, shortcuts, marker AND all user data.
-        // uninstall-hermes.ps1 manages its own error policy and never pauses; the process
-        // completing without a thrown error is treated as success.
         var sb = new StringBuilder();
-        sb.AppendLine("# Auto-generated by HermesLauncher (full uninstall, contains no secrets)");
+        sb.AppendLine("# Auto-generated by HermesLauncher (full uninstall, isolated temp)");
+        sb.AppendLine("$ErrorActionPreference = 'Stop'");
+        sb.AppendLine("$global:LASTEXITCODE = 0");
         sb.AppendLine("try {");
-        sb.AppendLine($"  & '{EscapePsSingleQuoted(uninstallScript)}' -RemoveAllData");
+        sb.AppendLine($"  & '{EscapePsSingleQuoted(uninstallScriptPath)}' `");
+        sb.AppendLine($"    -InstallDir '{EscapePsSingleQuoted(installDir)}' `");
+        sb.AppendLine("    -RemoveAllData `");
+        sb.AppendLine("    -RemoveMemOS `");
+        sb.AppendLine("    -RemoveObsidianSkills");
+        sb.AppendLine("  if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw \"uninstall-hermes.ps1 exited $LASTEXITCODE\" }");
         sb.AppendLine("} catch {");
         sb.AppendLine("  Write-Host $_ -ForegroundColor Red");
         sb.AppendLine("  exit 1");
         sb.AppendLine("}");
+        sb.AppendLine("exit 0");
 
-        File.WriteAllText(launchPath, sb.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        File.WriteAllText(launchPath, sb.ToString(), new UTF8Encoding(false));
         return launchPath;
+    }
+
+    private async Task PostUninstallCleanupAsync(InstallOperation op)
+    {
+        RaiseStep(op, "purge-files", "Verifying complete removal of Hermes files...", 0.98);
+        RaiseLog(op, "[UNINSTALL] Finalizing file system cleanup...");
+
+        // Wait briefly for all process handles, file notifications, and child processes to finish closing
+        await Task.Delay(600);
+
+        var targets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(op.Settings.InstallDir))
+            targets.Add(Path.GetFullPath(op.Settings.InstallDir));
+
+        targets.Add(Path.GetFullPath(HermesConfigService.DefaultHermesHome));
+
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrWhiteSpace(userProfile))
+        {
+            targets.Add(Path.GetFullPath(Path.Combine(userProfile, ".hermes")));
+        }
+
+        foreach (var dir in targets)
+        {
+            if (Directory.Exists(dir))
+            {
+                RaiseLog(op, $"[UNINSTALL] Removing residual directory: {dir}");
+                var deleted = ForceDeleteDirectoryWithRetry(dir, 5, 400);
+                if (deleted)
+                {
+                    RaiseLog(op, $"[UNINSTALL] Successfully removed: {dir}");
+                }
+                else
+                {
+                    RaiseLog(op, $"[UNINSTALL] WARNING: Could not fully remove {dir} (files locked by another process)", LogSeverity.Warning);
+                }
+            }
+        }
+
+        try
+        {
+            if (File.Exists(ProcessOwnershipRegistry.RegistryPath))
+                File.Delete(ProcessOwnershipRegistry.RegistryPath);
+        }
+        catch { }
+    }
+
+    private static bool ForceDeleteDirectoryWithRetry(string directoryPath, int maxRetries = 5, int delayMs = 400)
+    {
+        for (int i = 0; i < maxRetries; i++)
+        {
+            if (!Directory.Exists(directoryPath)) return true;
+
+            try
+            {
+                ClearAttributesRecursive(new DirectoryInfo(directoryPath));
+                Directory.Delete(directoryPath, recursive: true);
+            }
+            catch
+            {
+                Thread.Sleep(delayMs);
+            }
+
+            if (!Directory.Exists(directoryPath)) return true;
+        }
+
+        if (Directory.Exists(directoryPath))
+        {
+            try
+            {
+                using var p = Process.Start(new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/c rmdir /s /q \"{directoryPath}\"",
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                });
+                p?.WaitForExit(3000);
+            }
+            catch { }
+        }
+
+        return !Directory.Exists(directoryPath);
+    }
+
+    private static void ClearAttributesRecursive(DirectoryInfo directory)
+    {
+        try
+        {
+            directory.Attributes = FileAttributes.Normal;
+            foreach (var file in directory.EnumerateFiles("*", SearchOption.AllDirectories))
+            {
+                try
+                {
+                    file.Attributes = FileAttributes.Normal;
+                }
+                catch { }
+            }
+            foreach (var sub in directory.EnumerateDirectories("*", SearchOption.AllDirectories))
+            {
+                try
+                {
+                    sub.Attributes = FileAttributes.Normal;
+                }
+                catch { }
+            }
+        }
+        catch { }
     }
 
     private static string EscapePsSingleQuoted(string value)
@@ -513,6 +722,7 @@ public class InstallerRunnerService
         public CancellationTokenSource Cts { get; }
         public DateTimeOffset StartedAtUtc { get; } = DateTimeOffset.UtcNow;
         public string? LaunchScriptPath { get; set; }
+        public string? TempDirectoryToClean { get; set; }
         public OperationResult? Result { get; set; }
         public volatile bool CancellingRequested;
         public string[] Secrets { get; }

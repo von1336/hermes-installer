@@ -1,5 +1,7 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 param(
+    # Custom install dir chosen in the wizard/launcher; overrides every default below.
+    [string]$InstallDir = '',
     [switch]$KeepUserData,
     [switch]$RemoveMemOS,
     [switch]$RemoveObsidianSkills,
@@ -8,7 +10,14 @@ param(
 
 $ErrorActionPreference = 'Continue'
 
-$hermesHome = Join-Path $env:LOCALAPPDATA 'hermes'
+# Resolution order: explicit -InstallDir, then HERMES_HOME, then the default.
+$hermesHome = if (-not [string]::IsNullOrWhiteSpace($InstallDir)) {
+    $InstallDir.TrimEnd('\', '/')
+} elseif ($env:HERMES_HOME -and $env:HERMES_HOME.Trim()) {
+    $env:HERMES_HOME.Trim()
+} else {
+    Join-Path $env:LOCALAPPDATA 'hermes'
+}
 $metaPath = Join-Path $hermesHome 'install-meta.json'
 $markerPath = Join-Path $hermesHome 'install-complete.json'
 
@@ -45,9 +54,12 @@ function Test-HermesOwnedProcess {
     if ($proc.CommandLine) { $cmd = [string]$proc.CommandLine }
     $homeN = $hermesHome.TrimEnd('\')
     $wsN = $workspaceDir.TrimEnd('\')
+    $defHomeN = (Join-Path $env:LOCALAPPDATA 'hermes').TrimEnd('\')
     if ($exe -ne '' -and $exe.StartsWith($homeN, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    if ($exe -ne '' -and $defHomeN -ne '' -and $exe.StartsWith($defHomeN, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
     if ($exe -ne '' -and $wsN -ne '' -and $exe.StartsWith($wsN, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
     if ($cmd -ne '' -and $cmd.IndexOf($homeN, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+    if ($cmd -ne '' -and $defHomeN -ne '' -and $cmd.IndexOf($defHomeN, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
     if ($cmd -ne '' -and $wsN -ne '' -and $cmd.IndexOf($wsN, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
     return $false
 }
@@ -223,30 +235,66 @@ if ($RemoveAllData -or $RemoveObsidianSkills) {
     }
 }
 
-if ($RemoveAllData) {
-    if (Test-Path $hermesHome) {
-        Write-Host "  Removing install home: $hermesHome" -ForegroundColor Yellow
-        $removed = $false
-        for ($attempt = 0; $attempt -lt 3 -and -not $removed; $attempt++) {
-            try {
-                Remove-Item $hermesHome -Recurse -Force -ErrorAction Stop
-            } catch {
-                Start-Sleep -Seconds 2
+function Remove-DirectoryForcefully {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $true }
+
+    for ($attempt = 0; $attempt -lt 5; $attempt++) {
+        try {
+            Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
+                if ($_.Attributes -band [System.IO.FileAttributes]::ReadOnly) {
+                    $_.Attributes = $_.Attributes -bxor [System.IO.FileAttributes]::ReadOnly
+                }
             }
-            $removed = -not (Test-Path $hermesHome)
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+        } catch {
+            Start-Sleep -Milliseconds 500
         }
-        if ($removed) {
-            Write-Host "  Removed: $hermesHome" -ForegroundColor Green
-        } else {
-            $left = @(Get-ChildItem $hermesHome -Recurse -Force -ErrorAction SilentlyContinue)
-            Write-Host "  WARNING: $hermesHome was not fully removed ($($left.Count) items remain)." -ForegroundColor Yellow
-            Write-Host '  Some files are still locked by running processes. Open Task Manager and end' -ForegroundColor Yellow
-            Write-Host '  hermes/python/node processes referencing hermes paths, then delete the folder manually.' -ForegroundColor Yellow
-            $left | Select-Object -First 10 | ForEach-Object {
-                Write-Host "    left: $($_.FullName)" -ForegroundColor DarkGray
-            }
+        if (-not (Test-Path -LiteralPath $Path)) { return $true }
+    }
+
+    if (Test-Path -LiteralPath $Path) {
+        try {
+            & cmd.exe /c "rmdir /s /q `"$Path`"" 2>$null
+        } catch { }
+    }
+
+    return (-not (Test-Path -LiteralPath $Path))
+}
+
+if ($RemoveAllData) {
+    Write-Host "  Removing install home: $hermesHome" -ForegroundColor Yellow
+    $removed = Remove-DirectoryForcefully -Path $hermesHome
+    if ($removed) {
+        Write-Host "  Removed: $hermesHome" -ForegroundColor Green
+    } else {
+        $left = @(Get-ChildItem -LiteralPath $hermesHome -Recurse -Force -ErrorAction SilentlyContinue)
+        Write-Host "  WARNING: $hermesHome was not fully removed ($($left.Count) items remain)." -ForegroundColor Yellow
+        $left | Select-Object -First 10 | ForEach-Object {
+            Write-Host "    left: $($_.FullName)" -ForegroundColor DarkGray
         }
     }
+
+    $defaultHome = Join-Path $env:LOCALAPPDATA 'hermes'
+    if ($defaultHome -ne $hermesHome -and (Test-Path -LiteralPath $defaultHome)) {
+        Write-Host "  Removing default AppData home: $defaultHome" -ForegroundColor Yellow
+        $defRemoved = Remove-DirectoryForcefully -Path $defaultHome
+        if ($defRemoved) {
+            Write-Host "  Removed: $defaultHome" -ForegroundColor Green
+        }
+    }
+
+    $userHermes = Join-Path $env:USERPROFILE '.hermes'
+    if (Test-Path -LiteralPath $userHermes) {
+        Write-Host "  Removing user Hermes data: $userHermes" -ForegroundColor Yellow
+        Remove-DirectoryForcefully -Path $userHermes | Out-Null
+    }
+
+    try {
+        [Environment]::SetEnvironmentVariable('HERMES_HOME', $null, 'User')
+        $env:HERMES_HOME = $null
+        Write-Host '  Cleaned HERMES_HOME user environment variable.' -ForegroundColor DarkGray
+    } catch { }
 } else {
     Write-Host '  Kept %LOCALAPPDATA%\hermes (logs, connect.html, .env, install-meta.json).' -ForegroundColor DarkGray
     if (Test-Path $metaPath) {
@@ -260,3 +308,4 @@ Write-Host 'Optional cleanup:'
 Write-Host '  uninstall-hermes.ps1 -RemoveMemOS'
 Write-Host '  uninstall-hermes.ps1 -RemoveObsidianSkills'
 Write-Host '  uninstall-hermes.ps1 -RemoveAllData'
+exit 0

@@ -38,12 +38,22 @@ public sealed class UpdateService
         return client;
     }
 
+    public static Version Normalize(Version v)
+    {
+        return new Version(
+            Math.Max(0, v.Major),
+            Math.Max(0, v.Minor),
+            Math.Max(0, v.Build),
+            Math.Max(0, v.Revision)
+        );
+    }
+
     public static Version CurrentVersion
     {
         get
         {
             var v = Assembly.GetExecutingAssembly().GetName().Version;
-            return v ?? new Version(0, 0, 0, 0);
+            return v != null ? Normalize(v) : new Version(0, 0, 0, 0);
         }
     }
 
@@ -52,7 +62,7 @@ public sealed class UpdateService
         get
         {
             var v = CurrentVersion;
-            return v.Revision > 0 ? v.ToString(4) : v.ToString(3);
+            return v.Revision > 0 ? $"{v.Major}.{v.Minor}.{v.Build}.{v.Revision}" : $"{v.Major}.{v.Minor}.{v.Build}";
         }
     }
 
@@ -163,6 +173,11 @@ public sealed class UpdateService
     private static Version? ParseVersion(string tag)
     {
         var s = tag.Trim().TrimStart('v', 'V');
-        return Version.TryParse(s, out var v) ? v : null;
+        var dash = s.IndexOfAny(new[] { '-', '+' });
+        if (dash > 0)
+        {
+            s = s.Substring(0, dash);
+        }
+        return Version.TryParse(s, out var v) ? Normalize(v) : null;
     }
 }

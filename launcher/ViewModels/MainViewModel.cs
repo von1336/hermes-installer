@@ -640,6 +640,7 @@ public class MainViewModel : INotifyPropertyChanged, ISecretCommands
             return false;
         }
         _updateService.ApplyAndRestart(_pendingUpdatePath);
+        Application.Current?.Dispatcher.Invoke(() => Application.Current.Shutdown());
         return true;
     }
 
@@ -1092,7 +1093,8 @@ public class MainViewModel : INotifyPropertyChanged, ISecretCommands
                 IsInstalled = false;
                 _autoRefreshTimer.Stop();
                 _ = CheckServicesAsync();
-                SelectedTabIndex = 0; // Go to Dashboard
+                SelectedTabIndex = 2; // Keep on Wizard so user sees completion log
+                SetupWizardStep = 3;
                 ShowToast("Hermes uninstalled.");
             }
             else

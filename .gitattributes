@@ -1,0 +1,19 @@
+* text=auto eol=crlf
+
+*.ps1  text eol=crlf working-tree-encoding=UTF-8
+*.psm1 text eol=crlf working-tree-encoding=UTF-8
+*.bat  text eol=crlf working-tree-encoding=UTF-8
+*.cmd  text eol=crlf working-tree-encoding=UTF-8
+*.iss  text eol=crlf working-tree-encoding=UTF-8
+*.cs   text eol=crlf working-tree-encoding=UTF-8
+*.xaml text eol=crlf working-tree-encoding=UTF-8
+*.md   text eol=crlf working-tree-encoding=UTF-8
+*.txt  text eol=crlf working-tree-encoding=UTF-8
+*.yml  text eol=lf   working-tree-encoding=UTF-8
+*.json text eol=lf   working-tree-encoding=UTF-8
+
+*.png  binary
+*.ico  binary
+*.bmp  binary
+*.exe  binary
+*.pdb  binary

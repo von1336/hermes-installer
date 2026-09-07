@@ -80,30 +80,42 @@ public partial class MainWindow : Window
     {
         if (ToastHost == null || ViewModel == null) return;
         var hasMessage = !string.IsNullOrWhiteSpace(ViewModel.CopyNotification);
-        ToastHost.Visibility = hasMessage ? Visibility.Visible : Visibility.Collapsed;
         if (hasMessage)
         {
-            AnimateElement(ToastHost, -8);
+            ToastHost.Visibility = Visibility.Visible;
+            AnimateElement(ToastHost, -16);
+        }
+        else
+        {
+            ToastHost.Visibility = Visibility.Collapsed;
         }
     }
 
     private static void AnimateElement(UIElement element, double fromY)
     {
-        if (!SystemParameters.ClientAreaAnimation) return;
+        var group = new System.Windows.Media.TransformGroup();
+        var scale = new System.Windows.Media.ScaleTransform(0.988, 0.988);
+        var translate = new System.Windows.Media.TranslateTransform(0, fromY);
+        group.Children.Add(scale);
+        group.Children.Add(translate);
 
-        var transform = new System.Windows.Media.TranslateTransform(0, fromY);
-        element.RenderTransform = transform;
+        element.RenderTransformOrigin = new Point(0.5, 0.5);
+        element.RenderTransform = group;
         element.Opacity = 0;
 
-        var duration = TimeSpan.FromMilliseconds(180);
-        element.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, duration) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
-        transform.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, new DoubleAnimation(fromY, 0, duration) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+        var duration = TimeSpan.FromMilliseconds(240);
+        var cubicEase = new CubicEase { EasingMode = EasingMode.EaseOut };
+
+        element.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, duration) { EasingFunction = cubicEase });
+        translate.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, new DoubleAnimation(fromY, 0, duration) { EasingFunction = cubicEase });
+        scale.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleXProperty, new DoubleAnimation(0.988, 1.0, duration) { EasingFunction = cubicEase });
+        scale.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleYProperty, new DoubleAnimation(0.988, 1.0, duration) { EasingFunction = cubicEase });
     }
 
     private void FocusContentHost()
     {
         ContentHost.Focus();
-        AnimateElement(ContentHost, 10);
+        AnimateElement(ContentHost, 12);
     }
 
     private void TitleBar_MouseDown(object sender, MouseButtonEventArgs e)
@@ -369,7 +381,11 @@ public partial class MainWindow : Window
         }
     }
 
-    private void BtnWizardNext_Click(object sender, RoutedEventArgs e) => ViewModel?.NextSetupWizardStep();
+    private void BtnWizardNext_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel?.NextSetupWizardStep();
+        FocusContentHost();
+    }
 
     private async void BtnCheckUpdates_Click(object sender, RoutedEventArgs e)
     {
@@ -393,9 +409,17 @@ public partial class MainWindow : Window
         }
     }
 
-    private void BtnWizardBack_Click(object sender, RoutedEventArgs e) => ViewModel?.PrevSetupWizardStep();
+    private void BtnWizardBack_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel?.PrevSetupWizardStep();
+        FocusContentHost();
+    }
 
-    private void BtnWizardPrev_Click(object sender, RoutedEventArgs e) => ViewModel?.PrevSetupWizardStep();
+    private void BtnWizardPrev_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel?.PrevSetupWizardStep();
+        FocusContentHost();
+    }
 
     private void WizardStepTab_Click(object sender, RoutedEventArgs e)
     {

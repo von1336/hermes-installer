@@ -1,610 +1,123 @@
-# Аудит установщика Hermes и WPF-лаунчера
+# Bug Audit: Hermes Installer & Launcher
 
-## Статус исправлений (актуализировано)
+Дата: 2026-09-03  
+Объём: все текстовые файлы репозитория (PowerShell, C#, XAML, Inno Setup, bat/sh, CI, документация).  
+Метод: статический анализ. Пункты из раздела «Требует ручной проверки» не подтверждены запуском.
 
-Все подтверждённые дефекты P1/P2 из этого отчёта **исправлены**:
+Приоритеты:
 
-| # | Дефект | Статус | Где исправлено |
+- **P0** - блокирует сборку/поставку.
+- **P1** - ломает установку/удаление, создаёт ложное состояние или утечку.
+- **P2** - безопасность, корректность, UX.
+- **P3** - чистка и качество кода.
+
+---
+
+## P0. Блокирует сборку/поставку
+
+| # | Проблема | Файлы | Исправление |
 |---|---|---|---|
-| 1 | `-NoPause` перед параметрами MemOS | ✅ Исправлено | `InstallerRunnerService.cs` — `-NoPause` всегда последний, есть статическая проверка генератора |
-| 2 | Exit code `0` при провале health-check | ✅ Исправлено | `install-hermes.ps1` — обязательные gateway/workspace бросают исключение → `exit 1`; `INSTALLATION COMPLETE` только при успехе |
-| 3 | Гонка отмена/повторный запуск | ✅ Исправлено | `InstallerRunnerService.cs` — operation-scoped модель с `Guid`, отдельные CTS/Process, retry только после финального события |
-| 4 | `.env` == «установлено» | ✅ Исправлено | `HermesConfigService.IsHermesInstalled()` проверяет completion marker + оба `.env` + manifest + workspace + gateway |
-| 5 | Provider key в открытом виде во временном `.ps1` | ✅ Исправлено | Секрет передаётся через env-переменную процесса, скрипт удаляется в `finally`, значения редактируются в логах |
-| 6 | `ServiceMonitor` останавливал любого владельца порта | ✅ Исправлено | `ProcessOwnershipRegistry` — остановка только при подтверждённой принадлежности (exe path / cmdline / реестр PID) |
-| 7 | Clean reinstall убивал `hermes/node/pnpm/cmd` по имени | ✅ Исправлено | `ProcessOwnershipRegistry.StopAllOwned` с проверкой принадлежности |
-| 8 | `Wait-OnInstallFailure` игнорировал `-NoPause` | ✅ Исправлено | Все вызовы обёрнуты в `if (-not $Script:NoPause)` |
-| 9 | Удаление правил Firewall без elevation | ✅ Исправлено | `uninstall-hermes.ps1` — проверка `Test-IsAdmin`, повышение прав через `Start-Process -Verb RunAs`, отчёт об оставшихся правилах |
-| 10 | Uninstall убивал `hermes\|node\|pnpm\|ollama` по имени | ✅ Исправлено | `uninstall-hermes.ps1` — `Test-HermesOwnedProcess` (пути/командная строка), `ollama` никогда не завершается принудительно |
-| 11 | Секреты в UI / QR без предупреждений | ✅ Исправлено | Маскированные `PasswordBox`, Show/Hide, предупреждения, маскирование secret-ключей в `.env`-редакторе |
-| 12 | `Register-NativeTasks` при `StartServices=false` | ✅ Исправлено | Добавлен параметр `EnableAutoStart` (ps1 + `InstallSettings` + `hermes-setup.iss`); автозапуск отделён от запуска сервисов |
-| 13 | Ярлыки Start Menu не удалялись | ✅ Исправлено | `uninstall-hermes.ps1` удаляет `Hermes Connect QR.lnk` (Desktop + Start Menu) и пустую папку `Programs\Hermes`; completion marker инвалидируется при удалении |
-| 14 | `hermes gateway install/start` зависал на интерактивном промпте («Messaging platform token detected!») | ✅ Исправлено | `install-hermes.ps1` — `Invoke-HermesGatewayCommand` использует `echo. |` через cmd.exe для закрытия stdin + env-флаги `CI=true`, `HERMES_NONINTERACTIVE=1`, `NO_INPUT=1` |
-
-**Проверки после исправлений:** `dotnet build launcher\HermesLauncher.csproj` — успешно (0 ошибок); PowerShell parser check — `install-hermes.ps1`, `uninstall-hermes.ps1`, `lib\InstallComponents.ps1` без ошибок; статические проверки генерации launch-скрипта пройдены.
-
-**Не закрыто (риски из раздела «требуют ручной проверки»):** целостность загружаемых внешних артефактов (hash/signature), сетевые сценарии (офлайн/прокси/UAC), поведение при реальном запуске на целевой машине.
+| 1 | `build-exe.ps1` ссылается на несуществующие `exe\HermesInstaller.csproj` и `exe\Program.cs`; каталог `exe/` в `.gitignore`. README рекламирует «Console EXE Wrapper», который собрать нельзя. | `build-exe.ps1`, `README.md`, `.gitignore` | Удалить скрипт и раздел README либо вернуть проект в репозиторий. |
+| 2 | Хардкод путей разработчика: `process-logo.ps1` (`C:\Users\vona\.gemini\...`, `d:\apk\installer\...`), `build-brand-assets.ps1` (`C:\Users\vona\.cursor\...`), `install-hermes.bat` («Delete Telegram copies and use D:\apk\installer\»). | `process-logo.ps1`, `build-brand-assets.ps1`, `install-hermes.bat` | Удалить/параметризовать, убрать dev-сообщения из пользовательского bat. |
+| 3 | Четыре источника версии: `install-hermes.ps1` = `2026-08-30-pro-v9`, `version.txt` = `2026.9.8`, `HermesLauncher.csproj` = `2026.8.31.1`, `hermes-setup.iss` = `2026.08.30.9`; `install-hermes.bat` проверяет строку через `findstr`. | все перечисленные | Один источник (`version.txt`), генерация остальных при сборке. |
+| 4 | `clean-encoding.ps1` заменяет любой символ >=128 на `-` и уже испортил строки в `lib/InstallComponents.ps1` (`'not found --" skipping profile patch'`, `'--" continuing with degraded config'`, `'--" applying profile only'`, `'--" credentials may be invalid'`). | `clean-encoding.ps1`, `lib/InstallComponents.ps1` | Удалить скрипт, починить 4 строки, добавить `.gitattributes`/`.editorconfig`. |
 
 ---
 
-## Резюме
+## P1. Ломает установку/удаление или создаёт ложное состояние
 
-В ходе статического аудита WPF-лаунчера и PowerShell-компонентов Hermes найдено несколько важных проблем в установке, запуске, отмене, повторной установке, удалении и обработке секретов.
+### 6. StrictMode ломает отчёт об ошибке на ранних шагах
+`Set-StrictMode -Version Latest` из `lib/InstallComponents.ps1` протекает в `install-hermes.ps1` через dot-source. `Protect-SecretText` читает `$apiKey` и `$hermesPassword`, которые не определены до шага «Generating secrets». Любая ошибка раньше (winget, git, Python, hermes-agent) приводит к исключению внутри `Write-InstallFailureReport`: `install-error.txt` не пишется, Notepad не открывается, лаунчер видит только exit 1.  
+**Фикс:** инициализировать `$Script:ApiKey/$Script:HermesPassword = ''` в начале и использовать `$Script:`-переменные; либо не включать StrictMode в библиотеке.
 
-### Самые важные проблемы
+### 7. Native stderr + `$ErrorActionPreference='Stop'` в PS 5.1 с перенаправленными потоками
+Лаунчер запускает `powershell.exe` с `RedirectStandardError=true`. В этом режиме PS 5.1 превращает stderr нативных команд (`git clone` пишет «Cloning into...» в stderr, `winget`, `pnpm`, `corepack`, `node -v`) в `NativeCommandError`, а при `Stop` это терминирующая ошибка. Установка из лаунчера может падать на успешном `git clone`.  
+**Фикс:** нативные вызовы в блоке с `$ErrorActionPreference='Continue'` + проверка `$LASTEXITCODE`, либо через `Start-Process`/`cmd /c`.
 
-1. WPF-лаунчер неправильно формирует PowerShell-команду при передаче параметров MemOS.
-2. Установщик может завершиться с кодом `0`, даже если обязательные сервисы не запустились или не прошли health-check.
-3. Отмена установки может конфликтовать с повторным запуском.
-4. Наличие одного `.env`-файла ошибочно считается признаком полностью установленной системы.
-5. Ключи провайдера сохраняются в открытом виде во временном PowerShell-файле.
-6. Остановка сервисов может завершить процессы, не принадлежащие Hermes.
+### 8. `uninstall-hermes.ps1` игнорирует пользовательский `InstallDir`
+`$hermesHome` жёстко `%LOCALAPPDATA%\hermes`; из манифеста читается только `workspaceDir`. `WriteUninstallLaunchScript` в лаунчере не передаёт `InstallDir`. Установка в другой каталог не удаляется.
 
-Исходные файлы проекта в рамках аудита не изменялись. Добавлен только этот отчёт.
+### 9. Полное удаление из лаунчера всегда оставляет мусор
+`InstallerRunnerService` запускает PowerShell с `WorkingDirectory = %LOCALAPPDATA%\hermes\embedded-installer`; `Remove-Item $hermesHome -Recurse` не может удалить cwd работающего процесса, итог «WARNING: not fully removed». Затем лаунчер вызывает `ProcessOwnershipRegistry.Unregister`, а `Save()` заново создаёт `processes.json`.  
+**Фикс:** cwd в `%TEMP%`, копировать скрипт удаления в `%TEMP%`, не писать registry после uninstall.
 
----
+### 10. Uninstall не откатывает глобальные изменения
+Пользовательские переменные `HERMES_HOME` и `OLLAMA_HOST` остаются навсегда; `Hermes-install-error.txt` на рабочем столе тоже.
 
-## Приоритеты
+### 11. `EnableAutoStart=false` не соблюдается для gateway
+`Invoke-HermesGatewayCommand -Action install` всегда передаёт `--start-on-login` и `HERMES_GATEWAY_INSTALL_START_ON_LOGIN=1`. Также `Register-NativeTasks` использует `Get-Command hermes` вместо `Resolve-HermesCommand`: при устаревшем PATH задача `HermesDashboard` молча не создаётся.
 
-- **P0** — блокирует сборку или выпуск продукта.
-- **P1** — может сделать установку неработоспособной, привести к потере состояния, утечке секрета или повреждению работы других приложений.
-- **P2** — важная проблема, влияющая на безопасность, корректность удаления или пользовательский опыт.
-- **Риск для проверки** — потенциальная проблема, которую нельзя окончательно подтвердить без ручного запуска в соответствующей среде.
+### 12. Мастер в лаунчере собирает настройки, которые никуда не передаются
+Шаг «Provider» биндится к `ProviderBaseUrl/ProviderApiKey/ProviderModelName` (gateway-провайдер для «Apply & Restart Gateway»), а в `InstallSettings` уходят `MemOSProviderUrl/Key/Model`, для которых в XAML нет контролов. `MemOSProviderKey` всегда пуст, путь «секрет через env» мёртвый. Нет UI для `StartServices`, `EnableAutoStart`, `InstallObsidianSkills`, `MemOSMode` (чекбокс «Obsidian & Skills Pack» включает только Obsidian).  
+Файлы: `launcher/Views/MainWindow.xaml`, `launcher/ViewModels/MainViewModel.cs`.
 
----
+### 13. Гонка в `StartInstallAsync`/`StartUninstallAsync`
+`IsInstalling = true` выставляется до вызова runner; при `InvalidOperationException` (overlap) показывается toast, но `IsInstalling/IsCancelling/InstallationState` не сбрасываются, UI заблокирован навсегда.
 
-## Подтверждённые дефекты
+### 14. Ложный успех при старте сервисов из лаунчера
+`ServiceMonitor.RunProcessHidden` перенаправляет stderr и читает его только после `WaitForExit(10s)`: deadlock при >4 КБ вывода; по таймауту `StillRunning=true` трактуется как успех. `hermes gateway start` запускается без `CI/HERMES_NONINTERACTIVE` и с открытым stdin (промпт «Messaging platform token detected!»): зависает и репортится как «Started». `hermes` ищется только по PATH лаунчера, а не в `%LOCALAPPDATA%\hermes\bin`.
 
-### P1. WPF-лаунчер неправильно размещает параметр `-NoPause`
+### 15. Regenerate/Expire QR не делают того, что обещают
+`RegenerateConnectQr` генерирует секреты только если они пусты; кнопки 24h/7d/30d меняют лишь `exp` в payload, `API_SERVER_KEY`/`HERMES_PASSWORD` не ротируются, «Expire» только меняет таймер. README заявляет «1-click token regeneration».  
+**Фикс:** реальная ротация с записью в оба `.env` и рестартом gateway, либо убрать обещания из UI.
 
-**Файл:**
-
-- `D:\apk\installer\launcher\Services\InstallerRunnerService.cs:181-218`
-
-В генерируемом лаунчером скрипте сначала записывается:
-
-```powershell
--NoPause
-```
-
-а затем, при наличии настроек MemOS, добавляются параметры:
-
-```powershell
--MemOSProviderUrl ...
--MemOSProviderKey ...
--MemOSProviderModel ...
-```
-
-Параметр `-NoPause` находится перед концом многострочной PowerShell-команды. В результате следующие строки могут оказаться за пределами вызова установщика и быть восприняты как отдельные команды.
-
-#### Влияние
-
-Проблема проявляется в установках через WPF-лаунчер, когда пользователь указывает параметры MemOS. Эти параметры могут не попасть в `install-hermes.ps1`, а сам сгенерированный скрипт может завершиться ошибкой.
-
-#### Исправление
-
-Все дополнительные параметры нужно записывать до последней строки `-NoPause`:
-
-```csharp
-if (!string.IsNullOrWhiteSpace(settings.MemOSProviderUrl))
-    sb.AppendLine($"    -MemOSProviderUrl '{EscapePsSingleQuoted(settings.MemOSProviderUrl)}' `");
-
-if (!string.IsNullOrWhiteSpace(settings.MemOSProviderKey))
-    sb.AppendLine($"    -MemOSProviderKey '{EscapePsSingleQuoted(settings.MemOSProviderKey)}' `");
-
-if (!string.IsNullOrWhiteSpace(settings.MemOSProviderModel))
-    sb.AppendLine($"    -MemOSProviderModel '{EscapePsSingleQuoted(settings.MemOSProviderModel)}' `");
-
-sb.AppendLine("    -NoPause");
-```
-
-Также необходимо проверить экранирование одинарных кавычек и специальных символов PowerShell в URL, ключах и имени модели.
+### 16. Автоотправка отчёта об ошибке в GitHub без согласия
+`HandleOperationFinished` вызывает `SendErrorReportToGitHub(auto: true)`: перезаписывает буфер обмена и открывает браузер с телом, содержащим `Machine`, `User`, Tailscale/LAN IP, хвосты логов. Санитайзер редактирует только `KEY=`-паттерны и MemOS-ключ.  
+**Фикс:** сделать opt-in.
 
 ---
 
-### P1. Установщик считает неуспешный запуск сервисов предупреждением
+## P2. Безопасность, корректность, UX
 
-**Файл и строки:**
-
-- `D:\apk\installer\install-hermes.ps1:921-980`
-- `D:\apk\installer\install-hermes.ps1:1023-1045`
-- `D:\apk\installer\launcher\Services\InstallerRunnerService.cs:104-108`
-- `D:\apk\installer\launcher\ViewModels\MainViewModel.cs:812-823`
-
-Ошибки установки и запуска gateway выводятся как предупреждения. Таймауты health-check workspace и gateway также только печатаются в консоль:
-
-```powershell
-Write-Host 'Warning: gateway health timed out...'
-Write-Host 'Warning: workspace health timed out...'
-```
-
-После этого установщик может продолжить выполнение и завершиться как успешный. Лаунчер воспринимает код `0` как успех и переводит интерфейс в состояние установленной системы.
-
-#### Влияние
-
-Пользователь может увидеть сообщение об успешной установке, хотя:
-
-- gateway не установился;
-- gateway не запустился;
-- gateway не прошёл health-check;
-- workspace не запустился;
-- workspace не ответил в течение таймаута.
-
-Это приводит к ложному состоянию «установлено» и усложняет диагностику.
-
-#### Исправление
-
-Нужно определить обязательные критерии успеха. Если gateway и workspace являются обязательными компонентами, при их неработоспособности установщик должен:
-
-1. записать подробный результат в manifest и лог;
-2. вывести понятное сообщение пользователю;
-3. завершиться с ненулевым кодом;
-4. передать в лаунчер состояние `Failed`, а не `Completed`.
-
-Предупреждения следует оставлять только для действительно необязательных компонентов.
+17. **Inno Setup пишет MemOS API key открытым текстом** в `{tmp}\hermes-install-launch.ps1` (`WriteLaunchScript` в `hermes-setup.iss`). Фикс из аудита №5 покрыл только WPF-лаунчер.
+18. **Секрет через `psi.Environment` наследуется всеми дочерними процессами**, включая долгоживущие `hermes gateway` и `pnpm dev`: ключ виден через WMI/Process Explorer. Передавать через stdin или файл с ACL, удалять переменную перед запуском сервисов.
+19. **`connect.html` со секретами подгружает `qrcodejs` с jsdelivr CDN.** Встраивать QR как локальный PNG или инлайнить библиотеку.
+20. **Правила брандмауэра только для `Private,Domain`.** На Wi-Fi с профилем «Public» телефон не подключится, установщик покажет OK.
+21. **Supply chain:** `hermes-agent/main/scripts/install.ps1` и `MemOS/main/.../install.ps1` без пина (TOFU), кеш в HermesHome не обновляется; `UpdateService` подменяет exe без проверки `.sha256`; скрипт hermes-agent исполняется in-process (`& $HermesAgentScriptPath`), в отличие от MemOS.
+22. **`Set-YamlBlockField` может править чужой блок.** Регулярка `(^${Block}:[\s\S]*?\s*${Field}:\s*).*$` лениво ищет `Field` до конца файла: если в `embedding:` нет `provider`, будет заменён `provider` в `llm:`. Значения (включая `apiKey`) пишутся без кавычек, `#` и `:` ломают YAML.
+23. **Тройное создание ярлыков через Inno:** `[Icons]` (пропускается, `[Run]` ещё не выполнен), `CreateConnectShortcuts` в `ssPostInstall`, `install-hermes.ps1 -CreateShortcuts`. Папки Start Menu разные (`Hermes Workspace` vs `Programs\Hermes`).
+24. **Производительность:** `Test-HermesOwnedProcess` делает CIM-запрос на каждый процесс системы; `ProcessOwnershipRegistry` порождает `powershell.exe` на каждый вопрос. Использовать один `Get-CimInstance` и `System.Management`/`IPGlobalProperties`.
+25. **`ProcessOwnershipRegistry.Register` всегда получает `exePath = null`**: проверка «pid matches registry entry» не срабатывает никогда.
+26. **`Stop` для Ollama ничего не делает**, но toast говорит «Stopped Ollama Local LLM».
+27. **Windows Store-заглушка `python.exe`** проходит `Test-CommandExists 'python'` и даёт false positive в `SystemDiagnosticsService`.
+28. **`tailscale up` без таймаута** (`Start-Process -Wait`) в скрытом процессе; нет общего таймаута установки в лаунчере.
+29. **`Refresh-Path` пересобирает PATH из Machine+User** и теряет пути Tailscale/Ollama, добавленные в процессе.
+30. **`Write-InstallLog -Secret`** редактирует всё сообщение целиком: в логе `****<4 символа текста>`.
+31. **После Cancel сообщение «system left in previous state» ложно:** `.env`, задачи, firewall-правила уже могут быть созданы.
+32. **Логи установки в UI:** `InstallerLogText += line` через синхронный `Dispatcher.Invoke` на каждую строку: O(n^2) и фризы при `pnpm install`. Батчить через `BeginInvoke` + `StringBuilder`.
+33. **`pnpm dev` как продакшен-рантайм** (без сборки, с HMR, консольное окно при автозапуске через `cmd.exe /c`).
+34. **`ApplyAndRestart` в `UpdateService`:** `find "1234"` совпадает с PID `11234` (бесконечное ожидание); автозагрузка обновления при каждом старте без согласия.
+35. **`net6.0-windows` вне поддержки.** Перейти на net8+.
+36. **`COOKIE_SECURE=0`, `HOST=0.0.0.0`, HTTP без TLS**: при LAN-fallback API-ключ и пароль ходят открытым текстом по Wi-Fi. Минимум предупреждать в UI/QR-странице.
 
 ---
 
-### P1. Отмена установки может конфликтовать с повторным запуском
+## P3. Чистка и качество
 
-**Файл:**
-
-- `D:\apk\installer\launcher\Services\InstallerRunnerService.cs:18-25`
-- `D:\apk\installer\launcher\Services\InstallerRunnerService.cs:128-147`
-- `D:\apk\installer\launcher\ViewModels\MainViewModel.cs:745-789`
-
-В сервисе используются общие изменяемые поля:
-
-```csharp
-private CancellationTokenSource? _cts;
-private Process? _runningProcess;
-```
-
-Метод отмены сразу вызывает `Cancel()` и завершает процесс. В view model свойство `IsInstalling` после этого может быть немедленно установлено в `false`, хотя асинхронная операция и её `finally` ещё не завершились.
-
-#### Возможный сценарий
-
-1. Запустить установку A.
-2. Нажать Cancel.
-3. Сразу запустить установку B.
-4. Установка B перезапишет `_cts` и `_runningProcess`.
-5. Завершающая часть установки A продолжит работать и может очистить или уничтожить состояние установки B.
-
-#### Влияние
-
-Возможны:
-
-- завершение нового процесса вместо старого;
-- неправильный прогресс;
-- отображение ошибки старой операции после успешного retry;
-- одновременный запуск двух установщиков;
-- некорректное освобождение `Process`.
-
-#### Исправление
-
-- сделать состояние процесса локальным для конкретной операции;
-- не разрешать retry до полного завершения предыдущей операции;
-- устанавливать `IsInstalling = false` только после завершения runner;
-- использовать идентификатор операции, чтобы устаревшие события не меняли UI;
-- корректно освобождать `CancellationTokenSource`;
-- выделить отмену в отдельный результат, не смешивая её с обычной ошибкой.
+37. Мёртвый код: `Invoke-Elevated` (с `Invoke-Expression` base64), `ShowSetupWizardChrome/ShowSetupConfigFields/ShowSetupComponents`, `ApiKeyDisplay/PasswordDisplay`, `ISecretCommands`, `PairingWarning`, событие `Finished`, `SecretFieldDto`, `DataState`, `-KeepUserData`, `setup-workspace.sh`, `launcher/Resources/*.png` и корневой `hermes-logo.png` (дубликаты `assets/`).
+38. Стейл-документация: `AUDIT_REPORT_RU.md`, `plan.md`, `HERMES_GATEWAY_FIX.md` (описывает старую версию `Invoke-HermesGatewayCommand`), пути `D:\apk\installer`, README с несуществующим `installer\`.
+39. `build-setup.ps1` всегда перегенерирует `assets/*.bmp|ico`: недетерминированные сборки и шум в git.
+40. `Write-InstallManifest.choices` не содержит `enableAutoStart`, `createShortcuts`; результат компонента `workspace` записывается только при ошибке.
+41. `ApplyHermesBrandingText` в `.iss`: ветки russian/english идентичны.
+42. `SystemDiagnosticsService` и `lib/InstallComponents.ps1` расходятся в путях Obsidian и рекомендуемых пакетах (`OpenJS.NodeJS` vs `.LTS`, Python 3.11 vs 3.12).
+43. Нет тестов, `.sln`, PSScriptAnalyzer в CI, `.gitattributes`.
 
 ---
 
-### P1. Частично установленная система определяется как полностью установленная
+## Рекомендуемый порядок работ
 
-**Файл и строки:**
-
-- `D:\apk\installer\launcher\Services\HermesConfigService.cs:149-154`
-- `D:\apk\installer\install-hermes.ps1:859-882`
-- `D:\apk\installer\launcher\ViewModels\MainViewModel.cs:553-573`
-
-Проверка состояния установки использует логику вида:
-
-```csharp
-return File.Exists(envPath) || File.Exists(wsEnvPath);
-```
-
-При этом `.env` создаётся до завершения установки workspace.
-
-#### Влияние
-
-Если установка прервётся после генерации секретов и `.env`, но до успешного развёртывания workspace, лаунчер всё равно покажет систему как установленную.
-
-Пользователь может попасть в основной интерфейс вместо мастера установки, хотя необходимые компоненты отсутствуют.
-
-#### Исправление
-
-Нужно использовать явный маркер завершения, например `install-meta.json` со статусом `Completed`, и проверять обязательные артефакты:
-
-- manifest с успешным результатом;
-- оба требуемых `.env`-файла;
-- workspace и его служебные файлы;
-- установленный gateway;
-- при необходимости — успешные health-check.
-
-Одного факта наличия `.env` недостаточно.
+1. **Инфраструктура:** (`dotnet publish`, PSScriptAnalyzer, parser-check); единый `version.txt`; удалить `build-exe.ps1`, `process-logo.ps1`, `clean-encoding.ps1`; починить 4 испорченные строки; `.gitattributes`/`.editorconfig`; поправить README.
+2. **Надёжность установщика:** п.6, 7, 11, 20, 22, 28, 29, 30.
+3. **Uninstall:** п.8, 9, 10, 23; передавать `InstallDir`; cwd в `%TEMP%`; убрать `HERMES_HOME`/`OLLAMA_HOST`; единый список ярлыков.
+4. **Лаунчер, корректность:** п.12, 13, 14, 15, 25, 26, 32.
+5. **Безопасность:** п.16, 17, 18, 19, 21, 36.
+6. **Производительность и модернизация:** п.24, 33, 34, 35.
+7. **Чистка:** п.37-43.
 
 ---
 
-### P1. Ключ провайдера остаётся в открытом временном PowerShell-файле
-
-**Файл:**
-
-- `D:\apk\installer\launcher\Services\InstallerRunnerService.cs:181-218`
-
-Лаунчер создаёт временный файл примерно такого вида:
-
-```csharp
-var launchPath = Path.Combine(
-    Path.GetTempPath(),
-    $"hermes-launcher-install-{Guid.NewGuid():N}.ps1");
-```
-
-Значения MemOS provider URL, key и model вставляются непосредственно в содержимое файла. Удаление файла после выполнения не обеспечено.
-
-#### Влияние
-
-API-ключ может остаться в `%TEMP%` и быть доступен локальным процессам, индексаторам, средствам резервного копирования, антивирусу, диагностическим инструментам или другим пользователям с соответствующими правами.
-
-#### Исправление
-
-Предпочтительные варианты:
-
-- передавать секреты через переменные окружения с ограниченным временем жизни;
-- использовать стандартный ввод;
-- использовать временный файл с ограниченными ACL;
-- хранить долгосрочные секреты в защищённом хранилище Windows.
-
-Минимально необходимо:
-
-- удалять временный скрипт в `finally`;
-- не записывать его содержимое в лог;
-- по возможности не оставлять секреты в читаемом виде после завершения операции.
-
----
-
-### P1. Остановка сервиса может завершить чужой процесс
-
-**Файл:**
-
-- `D:\apk\installer\launcher\Services\ServiceMonitor.cs:297-313`
-
-Остановка процесса выполняется через поиск владельца порта и принудительный `Stop-Process`. Проверки имени процесса, пути к исполняемому файлу, командной строки, рабочей директории или сохранённого PID нет.
-
-#### Влияние
-
-Если порт `3000`, `9119` или другой используемый порт занят чужим приложением, операция остановки может принудительно завершить это приложение.
-
-Особенно опасно для:
-
-- других Node.js-сервисов;
-- локальных серверов разработчика;
-- приложений другого проекта;
-- общих машин разработки.
-
-#### Исправление
-
-Перед остановкой нужно подтвердить принадлежность процесса Hermes по нескольким признакам:
-
-- ожидаемый путь к executable;
-- командная строка;
-- рабочая директория workspace;
-- имя и параметры зарегистрированной задачи;
-- PID, сохранённый во время запуска.
-
-Нельзя считать владельца порта процессом Hermes без дополнительной проверки.
-
----
-
-### P1. Clean Reinstall использует слишком широкое завершение процессов
-
-**Файл:**
-
-- `D:\apk\installer\launcher\Services\InstallerRunnerService.cs:149-179`
-
-В clean reinstall рассматриваются процессы с именами:
-
-```powershell
-'hermes','node','pnpm','cmd'
-```
-
-Все процессы с именем `hermes` завершаются без проверки командной строки. Для Node и cmd используется широкое сопоставление командной строки по словам `hermes`, `pnpm dev` или `hermes-workspace`.
-
-#### Влияние
-
-Можно завершить посторонний процесс, если он совпадает по имени или содержит подходящую строку в командной строке.
-
-#### Исправление
-
-Нужно отказаться от глобального завершения процессов по имени и использовать реестр запущенных процессов Hermes с проверкой пути, командной строки, рабочей директории и PID.
-
----
-
-### P2. `-NoPause` не учитывается в некоторых сценариях ошибки
-
-**Файл и строки:**
-
-- `D:\apk\installer\install-hermes.ps1:202-213`
-- `D:\apk\installer\install-hermes.ps1:1076-1080`
-
-При ошибке вызывается:
-
-```powershell
-Wait-OnInstallFailure
-```
-
-без проверки `$Script:NoPause`. Функция ждёт ввода пользователя или выполняет задержку примерно 30 секунд.
-
-#### Влияние
-
-При запуске из WPF-лаунчера ошибка может завершаться с задержкой, зависать в ожидании ввода или мешать быстрому retry.
-
-#### Исправление
-
-Пауза должна выполняться только в интерактивном режиме:
-
-```powershell
-if (-not $Script:NoPause) {
-    Wait-OnInstallFailure
-}
-```
-
----
-
-### P2. Удаление может не удалить правила Windows Firewall
-
-**Файл:**
-
-- `D:\apk\installer\uninstall-hermes.ps1:41-57`
-
-Скрипт удаления может запускаться без административных прав, хотя удаление правил Windows Firewall обычно требует повышения привилегий.
-
-Удаление правил Firewall требует административных прав. Скрипт только сообщает о проблеме:
-
-```text
-Some firewall rules remain. Re-run as Administrator to remove them.
-```
-
-#### Влияние
-
-Обычное удаление может оставить входящие правила для портов `3000`, `8642` и `9119`, создав сетевое воздействие после удаления приложения.
-
-#### Исправление
-
-- реализовать контролируемое повышение прав только для удаления правил;
-- добавить отдельный elevated cleanup step;
-- либо считать удаление незавершённым, пока правила не удалены;
-- явно показать пользователю, какие правила остались.
-
----
-
-### P2. Uninstaller может завершить сторонние Node, pnpm или Ollama
-
-**Файл:**
-
-- `D:\apk\installer\uninstall-hermes.ps1:29-33`
-
-Скрипт проверяет порты `3000`, `8642`, `9119`, `11434`, а затем завершает процессы, имена которых соответствуют:
-
-```text
-hermes|node|pnpm|ollama
-```
-
-#### Влияние
-
-Удаление Hermes может остановить независимый Ollama, Node.js-сервис или другое приложение, использующее один из этих портов.
-
-#### Исправление
-
-Нужно использовать проверку принадлежности процесса Hermes: PID, executable path, command line, рабочую директорию и зарегистрированные задачи. Нельзя определять принадлежность только по порту и имени процесса.
-
----
-
-### P2. Секреты отображаются в интерфейсе и QR-странице без достаточного ограничения
-
-**Файлы:**
-
-- `D:\apk\installer\launcher\Models\ConnectPayloadDto.cs:23-27`
-- `D:\apk\installer\launcher\Services\QrGeneratorService.cs:30-51`
-- `D:\apk\installer\launcher\ViewModels\MainViewModel.cs:553-589`
-- `D:\apk\installer\launcher\Views\MainWindow.xaml:788-824`
-- `D:\apk\installer\install-hermes.ps1:749-754`
-- `D:\apk\installer\install-hermes.ps1:1004-1018`
-
-В QR payload включаются `ApiKey` и `Password`. Значения также загружаются в view model и показываются в обычных `TextBox`, включая редактор `.env`.
-
-#### Влияние
-
-Доступ к `connect.html`, QR-коду, окну лаунчера или скопированному выводу может предоставить доступ к credentials.
-
-Такой дизайн может быть частью предполагаемого механизма pairing, но сейчас секреты не ограничены по сроку жизни и не маскируются в интерфейсе.
-
-#### Исправление
-
-- использовать masked controls для паролей и API-ключей;
-- добавить явную кнопку «Показать» с предупреждением;
-- не показывать секретные значения в raw `.env`-редакторе по умолчанию;
-- использовать короткоживущие pairing-токены вместо долгосрочных ключей;
-- редактировать и очищать секреты в логах и диагностических пакетах;
-- ограничить срок действия QR payload.
-
----
-
-### P2. При отключённом запуске сервисов всё равно регистрируются задачи автозапуска
-
-**Файл и строки:**
-
-- `D:\apk\installer\install-hermes.ps1:962-965`
-- `D:\apk\installer\install-hermes.ps1:977-980`
-
-В ветке, где запуск сервисов отключён, всё равно вызывается:
-
-```powershell
-Register-NativeTasks -ApiKey $apiKey -Password $hermesPassword
-```
-
-#### Влияние
-
-Пользователь может снять опцию запуска Hermes после установки, но получить Scheduled Tasks или Startup-записи, которые запустят сервисы при следующем входе в Windows.
-
-#### Исправление
-
-Разделить два независимых параметра:
-
-1. запустить сервисы сразу после установки;
-2. регистрировать постоянный запуск при входе пользователя.
-
-Если это одна опция, `Register-NativeTasks` нужно пропускать при `StartServices = false`.
-
----
-
-### P2. Создание ярлыков не согласовано между установкой и удалением
-
-**Файлы:**
-
-- `D:\apk\installer\install-hermes.ps1:1047-1059`
-- `D:\apk\installer\uninstall-hermes.ps1:59-69`
-
-PowerShell-установщик создаёт ярлыки в Start Menu в каталоге:
-
-```text
-Programs\Hermes
-```
-
-Скрипт удаления явно удаляет Startup-файлы, но не удаляет созданную PowerShell папку ярлыков Start Menu.
-
-#### Влияние
-
-После удаления может остаться ярлык `Hermes Connect QR.lnk`, ведущий на удалённый `connect.html`, либо пустая папка в Start Menu.
-
-#### Исправление
-
-Нужно использовать единый механизм создания ярлыков и обеспечить симметричное удаление всех созданных файлов и каталогов.
-
----
-
-## Дополнительные риски, требующие ручной проверки
-
-Следующие пункты выявлены при статическом анализе, но не подтверждены полноценным запуском в реальной среде.
-
-### 1. Ошибки команд запуска сервисов могут подавляться
-
-В `ServiceMonitor` обработчики исключений скрывают ошибки, а результат выполнения процесса и exit code могут проверяться недостаточно строго. В результате UI может показать «Started» или «Stopped», хотя команда фактически завершилась неудачно.
-
-Нужно проверить `RunProcessHidden`, обработку exit code и отображение исключений в интерфейсе.
-
-### 2. Не сохраняется надёжная информация о владельце запущенного процесса
-
-Detached-процессы запускаются без полноценной фиксации PID и проверки, что последующая остановка относится именно к процессу Hermes. Это усиливает риск остановки чужого приложения.
-
-### 3. Внешние скрипты и репозитории запускаются без полноценной проверки целостности
-
-Установщик использует загрузку внешних файлов и Git-репозиториев. Необходимо проверить, применяются ли:
-
-- фиксированные версии;
-- хеши;
-- цифровые подписи;
-- доверенные источники;
-- проверка содержимого до запуска.
-
-Иначе присутствует supply-chain риск.
-
-### 4. Установка зависит от сети и внешних инструментов
-
-В работу вовлечены `winget`, GitHub, Git clone, `pnpm`, Tailscale, Ollama и внешние API провайдеров. Следует отдельно проверить:
-
-- отсутствие интернета;
-- прокси;
-- ограниченного пользователя;
-- отказ UAC;
-- частичную загрузку;
-- таймауты;
-- уже установленную несовместимую версию инструмента.
-
-### 5. Необходима проверка исключений при работе с конфигурацией
-
-Чтение и запись `.env`, применение provider-настроек и редактирование переменных окружения могут завершиться ошибкой из-за:
-
-- отсутствия прав;
-- блокировки файла;
-- повреждённого формата;
-- неожиданной кодировки;
-- параллельного доступа.
-
-Нужно проверить, что пользователь получает понятное сообщение, а не только исключение или молчаливый сбой.
-
----
-
-## Проверки, выполненные во время аудита
-
-### Успешные проверки
-
-PowerShell Parser не обнаружил синтаксических ошибок в:
-
-- `D:\apk\installer\install-hermes.ps1`
-- `D:\apk\installer\lib\InstallComponents.ps1`
-- `D:\apk\installer\uninstall-hermes.ps1`
-- `D:\apk\installer\build-launcher.ps1`
-- `D:\apk\installer\build-setup.ps1`
-
-WPF-лаунчер собрался успешно:
-
-```text
-D:\apk\installer\launcher\HermesLauncher.csproj
-```
-
-Результат:
-
-- код завершения: `0`;
-- ошибок: `0`;
-- предупреждение: `NETSDK1179` при прямом вызове `dotnet build -r`, потому что для runtime нужно явно указать `--self-contained` или `--no-self-contained`.
-
-### Не найдено
-
-В `D:\apk\installer` не найден отдельный test project, `.sln` или набор файлов с тестами для автоматической проверки launcher/install flow.
-
-Каталог `D:\apk\installer\dist` содержит существующие артефакты, включая `HermesInstaller.exe` и `HermesLauncher.exe`. Наличие существующего бинарного файла не подтверждает успешность текущей сборки лаунчера.
-
-Git-статус проверить не удалось: `D:\apk\installer` не является корнем Git-репозитория.
-
----
-
-## Что не проверялось вручную
-
-- полноценный запуск установщика;
-- установка с UAC и без административных прав;
-- установка без сети;
-- запуск и остановка всех сервисов;
-- отмена установки;
-- retry после отмены и ошибки;
-- повторная установка поверх существующей;
-- clean reinstall;
-- полное удаление;
-- удаление правил Firewall;
-- проверка Scheduled Tasks;
-- сканирование QR-кода мобильным клиентом;
-- фактическая работа gateway и workspace;
-- проверка внешних package manager и provider API;
-- проверка обработки повреждённых или заблокированных `.env`-файлов.
-
----
-
-## Рекомендуемый порядок исправлений
-
-1. Исправить порядок `-NoPause` и параметров MemOS в `InstallerRunnerService.cs`.
-2. Сделать ошибки обязательных health-check причиной ненулевого exit code.
-3. Исправить модель отмены и запретить retry до завершения предыдущей операции.
-4. Заменить проверку установки по наличию `.env` на проверку completion marker и обязательных артефактов.
-5. Убрать секреты из временных PowerShell-скриптов и гарантировать очистку временных файлов.
-6. Ограничить остановку процессов только экземплярами Hermes.
-7. Исправить elevation при удалении правил Firewall.
-8. Согласовать создание и удаление ярлыков.
-9. Разделить немедленный запуск сервисов и автозапуск при входе пользователя.
-10. Маскировать секреты в UI и пересмотреть содержимое QR payload.
-11. Добавить автоматические тесты для генерации PowerShell, exit code, отмены, retry, частичной установки, ownership процессов и удаления.
-12. Провести end-to-end тестирование на чистой Windows-машине и на машине с уже занятыми портами.
-
-## Итоговая оценка
-
-В текущем состоянии WPF-лаунчер и PowerShell-установщик требуют исправления существенных рисков ложного успеха установки, небезопасной отмены/retry, утечки секретов и завершения чужих процессов. До релиза необходимо исправить все пункты P1 и P2, добавить автоматические проверки и провести ручное end-to-end тестирование полного жизненного цикла установки.
+## Требует ручной проверки на реальной машине
+
+- Существуют ли флаги `hermes gateway install --start-now --start-on-login` и эндпоинты `/health`, `/api/healthcheck`, `/api/status`, порт MemOS 18800.
+- Поведение `git clone`/`winget` под лаунчером (п.7) на PS 5.1.
+- Полный цикл: установка в нестандартный каталог, Cancel, Retry, Clean Reinstall, Full Uninstall, с проверкой остатков (`%LOCALAPPDATA%\hermes`, env-переменные, задачи, firewall, ярлыки).

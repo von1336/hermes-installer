@@ -1,5 +1,6 @@
-﻿#Requires -Version 5.1
-# VERSION: 2026-08-30-pro-v9
+#Requires -Version 5.1
+# VERSION: 2026.9.9
+# Single source of truth for the version is version.txt next to this script.
 # Prefer native Windows for workspace (Node already on PC). WSL is optional.
 # Always prefer Tailscale IP for phone connect. Optional Ollama, MemOS, Obsidian.
 # Supports GUI wizard flags from HermesWorkspaceSetup.exe (Inno Setup).
@@ -26,7 +27,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Script:InstallerVersion = '2026-08-30-pro-v9'
+$Script:Root = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$Script:InstallerVersion = '2026.9.9' # fallback; keep in sync with version.txt
+$versionFile = Join-Path $Script:Root 'version.txt'
+if (Test-Path -LiteralPath $versionFile) {
+    $v = (Get-Content -LiteralPath $versionFile -Raw -ErrorAction SilentlyContinue)
+    if ($v) { $Script:InstallerVersion = $v.Trim() }
+}
 
 if ([string]::IsNullOrWhiteSpace($InstallDir)) {
     $Script:HermesHome = Join-Path $env:LOCALAPPDATA 'hermes'
@@ -44,7 +51,6 @@ $Script:GatewayPort = 8642
 $Script:DashboardPort = 9119
 $Script:WorkspacePort = 3000
 $Script:OllamaPort = 11434
-$Script:Root = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $Script:LogFile = Join-Path $Script:HermesHome 'install.log'
 $Script:ErrorReportPath = Join-Path $Script:HermesHome 'install-error.txt'
 $Script:CompletionMarker = Join-Path $Script:HermesHome 'install-complete.json'
@@ -66,6 +72,11 @@ $Script:PrintConnectSecrets = $PrintConnectSecrets
 $Script:NoPause = [bool]$NoPause
 $Script:ComponentResults = [ordered]@{}
 $Script:FailureReported = $false
+$Script:WorkspaceRunMode = 'dev'
+# Secrets are generated late ("Generating secrets" step) but referenced by the
+# failure report redactor; pre-initialize so StrictMode never breaks error reporting.
+$Script:ApiKey = ''
+$Script:HermesPassword = ''
 
 if (-not (Test-Path $Script:HermesHome)) {
     New-Item -ItemType Directory -Path $Script:HermesHome -Force | Out-Null
@@ -97,7 +108,7 @@ function Get-SafeErrorText($ErrorRecord) {
 
 function Protect-SecretText([string]$Text) {
     if ([string]::IsNullOrEmpty($Text)) { return $Text }
-    $secretValues = @($Script:MemOSProviderKey, $apiKey, $hermesPassword) | Where-Object {
+    $secretValues = @($Script:MemOSProviderKey, $Script:ApiKey, $Script:HermesPassword) | Where-Object {
         -not [string]::IsNullOrWhiteSpace($_) -and $_.Length -ge 6
     }
     foreach ($sv in $secretValues) {
@@ -260,16 +271,61 @@ function Invoke-Elevated([scriptblock]$Block) {
 }
 
 function Refresh-Path {
-    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $env:Path = @($machinePath, $userPath) -join ';'
-    if ((Test-Path $Script:HermesBin) -and ($env:Path -notlike "*$Script:HermesBin*")) {
-        $env:Path = "$Script:HermesBin;$env:Path"
+    # Merge Machine+User PATH with the CURRENT process PATH (union, deduped).
+    # Rebuilding from registry alone would drop dirs appended in-process
+    # (e.g. Tailscale/Ollama bin dirs added by Ensure-* components).
+    $seen = @{}
+    $merged = New-Object System.Collections.Generic.List[string]
+    foreach ($src in @($env:Path, [Environment]::GetEnvironmentVariable('Path', 'Machine'), [Environment]::GetEnvironmentVariable('Path', 'User'))) {
+        if (-not $src) { continue }
+        foreach ($entry in ($src -split ';')) {
+            $e = $entry.Trim()
+            if (-not $e) { continue }
+            $key = $e.TrimEnd('\').ToLowerInvariant()
+            if (-not $seen.ContainsKey($key)) {
+                $seen[$key] = $true
+                $merged.Add($e)
+            }
+        }
     }
-    $npmGlobal = Join-Path $env:APPDATA 'npm'
-    if ((Test-Path $npmGlobal) -and ($env:Path -notlike "*$npmGlobal*")) {
-        $env:Path = "$npmGlobal;$env:Path"
+    foreach ($extra in @($Script:HermesBin, (Join-Path $env:APPDATA 'npm'))) {
+        if ($extra -and (Test-Path $extra)) {
+            $key = $extra.TrimEnd('\').ToLowerInvariant()
+            if (-not $seen.ContainsKey($key)) {
+                $seen[$key] = $true
+                $merged.Insert(0, $extra)
+            }
+        }
     }
+    $env:Path = ($merged -join ';')
+}
+
+function Invoke-Native {
+    # PS 5.1 turns native stderr into NativeCommandError when $ErrorActionPreference='Stop'
+    # AND streams are redirected (launcher scenario) - successful `git clone` then aborts the
+    # install. Run native commands with EAP=Continue and judge by $LASTEXITCODE instead.
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [switch]$IgnoreExitCode,
+        [string]$FailureMessage = ''
+    )
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $FilePath @Arguments 2>&1 | ForEach-Object {
+            $line = if ($null -eq $_) { '' } elseif ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { [string]$_ }
+            if ($line) { Write-Host "    $line" -ForegroundColor DarkGray }
+        }
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    if (-not $IgnoreExitCode -and $code -ne 0) {
+        $msg = if ($FailureMessage) { $FailureMessage } else { "$FilePath $($Arguments -join ' ') failed with exit code $code" }
+        throw $msg
+    }
+    return $code
 }
 
 function Test-CommandExists([string]$Name) {
@@ -305,26 +361,30 @@ function Ensure-WingetPackage([string]$Id, [string]$Label) {
         throw "Failed to install $Label (winget missing). Install manually and re-run."
     }
     Write-Host "  Installing $Label via winget..."
-    winget install --id $Id -e --accept-package-agreements --accept-source-agreements
+    Invoke-Native winget @('install', '--id', $Id, '-e', '--accept-package-agreements', '--accept-source-agreements') `
+        -FailureMessage "winget failed to install $Label"
     Refresh-Path
     if (-not (Test-CommandExists $Label)) {
         throw "Failed to install $Label. Install manually and re-run."
     }
 }
 
+function Test-PythonUsable {
+    # The Windows Store python.exe stub passes Get-Command but exits non-zero when run.
+    if (-not (Test-CommandExists 'python')) { return $false }
+    $code = Invoke-Native python @('--version') -IgnoreExitCode
+    return ($code -eq 0)
+}
+
 function Ensure-Python {
-    if (Test-CommandExists 'python') {
-        try {
-            Write-Host ("  python: {0}" -f (python --version 2>&1))
-        } catch {
-            Write-Host '  python already installed'
-        }
+    if (Test-PythonUsable) {
+        $null = Invoke-Native python @('--version') -IgnoreExitCode
         return
     }
     Write-Host '  Installing Python via winget...'
     if (Test-WingetAvailable) {
         try {
-            winget install --id Python.Python.3.12 -e --accept-package-agreements --accept-source-agreements | Out-Null
+            Invoke-Native winget @('install', '--id', 'Python.Python.3.12', '-e', '--accept-package-agreements', '--accept-source-agreements')
             Refresh-Path
         } catch {
             Write-Host "  winget Python failed: $_" -ForegroundColor Yellow
@@ -332,24 +392,23 @@ function Ensure-Python {
     } else {
         Write-Host '  winget not found. Install: winget install Python.Python.3.12' -ForegroundColor Yellow
     }
-    if (-not (Test-CommandExists 'python')) {
+    if (-not (Test-PythonUsable)) {
         Write-Host '  Python not detected yet; hermes-agent installer may install it.' -ForegroundColor Yellow
-    } else {
-        Write-Host ("  python: {0}" -f (python --version 2>&1))
     }
 }
 
 function Ensure-Pnpm {
     if (Test-CommandExists 'pnpm') {
-        Write-Host ("  pnpm already installed: {0}" -f (pnpm -v))
+        $null = Invoke-Native pnpm @('-v') -IgnoreExitCode
         return
     }
     Write-Host '  Installing pnpm...'
-    try {
-        corepack enable 2>$null
-        corepack prepare pnpm@latest --activate
-    } catch {
-        npm install -g pnpm
+    $code = Invoke-Native corepack @('enable') -IgnoreExitCode
+    if ($code -eq 0) {
+        $code = Invoke-Native corepack @('prepare', 'pnpm@latest', '--activate') -IgnoreExitCode
+    }
+    if ($code -ne 0) {
+        Invoke-Native npm @('install', '-g', 'pnpm') -FailureMessage 'npm install -g pnpm failed'
     }
     Refresh-Path
     if (-not (Test-CommandExists 'pnpm')) {
@@ -514,7 +573,9 @@ function Invoke-HermesGatewayCommand {
     param(
         [ValidateSet('install', 'start')]
         [string]$Action,
-        [int]$TimeoutSec = 120
+        [int]$TimeoutSec = 120,
+        # Honours the wizard's EnableAutoStart choice instead of forcing --start-on-login.
+        [bool]$StartOnLogin = [bool]$Script:EnableAutoStart
     )
 
     $hermesPath = Resolve-HermesCommand
@@ -554,14 +615,16 @@ function Invoke-HermesGatewayCommand {
     $env:PYTHONIOENCODING = 'utf-8'
     $env:PYTHONUTF8 = '1'
     $env:HERMES_GATEWAY_INSTALL_START_NOW = '1'
-    $env:HERMES_GATEWAY_INSTALL_START_ON_LOGIN = '1'
+    $env:HERMES_GATEWAY_INSTALL_START_ON_LOGIN = $(if ($StartOnLogin) { '1' } else { '0' })
 
     try {
         # Use cmd.exe wrapper to properly close stdin (echo. | closes the pipe).
         # Exit code is ALSO written to a file by cmd itself: Start-Process with
         # redirected streams can lose ExitCode (returns $null) when the child
         # spawns a detached gateway process and exits before .NET finalizes it.
-        $extraArgs = if ($Action -eq 'install') { ' --start-now --start-on-login' } else { '' }
+        $extraArgs = if ($Action -eq 'install') {
+            if ($StartOnLogin) { ' --start-now --start-on-login' } else { ' --start-now' }
+        } else { '' }
         $codeFile = Join-Path $env:TEMP ("hermes-gw-{0}-{1}.code" -f $Action, [guid]::NewGuid().ToString('N'))
         $cmdWrapper = "echo. | `"$(Get-NativePath $hermesPath)`" gateway $Action$extraArgs & echo !ERRORLEVEL! > `"$codeFile`""
         $proc = Start-Process -FilePath 'cmd.exe' `
@@ -655,7 +718,7 @@ foreach (`$rule in `$rules) {
         continue
     }
     New-NetFirewallRule -DisplayName `$rule.Name -Direction Inbound -Action Allow ``
-        -Protocol TCP -LocalPort `$rule.Port -Profile Private,Domain | Out-Null
+        -Protocol TCP -LocalPort `$rule.Port -Profile Private,Domain,Public | Out-Null
     Write-Host ("  Added firewall rule: {0}" -f `$rule.Name)
     `$added++
 }
@@ -698,6 +761,7 @@ function Install-WorkspaceNative {
     Write-Host ("  Workspace dir: {0}" -f $Script:WorkspaceDir)
     $gitDir = Join-Path $Script:WorkspaceDir '.git'
     $repoUrl = 'https://github.com/outsourc-e/hermes-workspace.git'
+    $clonedFresh = $false
 
     if (-not (Test-Path $gitDir)) {
         if (Test-Path $Script:WorkspaceDir) {
@@ -724,19 +788,22 @@ Refusing to delete user data.
                 Write-Host '  Retrying git clone...' -ForegroundColor Yellow
                 Start-Sleep -Seconds 3
             }
-            git clone $repoUrl $Script:WorkspaceDir
-            if ($LASTEXITCODE -eq 0) { $cloneOk = $true; break }
+            $code = Invoke-Native git @('clone', $repoUrl, $Script:WorkspaceDir) -IgnoreExitCode
+            if ($code -eq 0) { $cloneOk = $true; break }
         }
-        if (-not $cloneOk) { throw "git clone failed after 2 attempts (exit $LASTEXITCODE)" }
+        if (-not $cloneOk) { throw "git clone failed after 2 attempts (exit $code)" }
+        $clonedFresh = $true
     } else {
         Push-Location $Script:WorkspaceDir
         try {
-            $remote = (git remote get-url origin 2>$null)
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { $remote = ([string](git remote get-url origin 2>$null)).Trim() } finally { $ErrorActionPreference = $prevEap }
             Write-Host ("  Existing clone (origin={0})" -f $(if ($remote) { $remote } else { 'unknown' }))
             if ($remote -and $remote -notmatch 'hermes-workspace') {
                 Write-Host '  Warning: origin is not hermes-workspace; skipping git pull' -ForegroundColor Yellow
             } else {
-                try { git pull --ff-only } catch { Write-Host '  git pull skipped' }
+                $null = Invoke-Native git @('pull', '--ff-only') -IgnoreExitCode
             }
         } finally {
             Pop-Location
@@ -751,10 +818,36 @@ Refusing to delete user data.
                 Write-Host '  Retrying pnpm install...' -ForegroundColor Yellow
                 Start-Sleep -Seconds 3
             }
-            pnpm install
-            if ($LASTEXITCODE -eq 0) { $pnpmOk = $true; break }
+            $code = Invoke-Native pnpm @('install') -IgnoreExitCode
+            if ($code -eq 0) { $pnpmOk = $true; break }
         }
-        if (-not $pnpmOk) { throw "pnpm install failed after 2 attempts (exit $LASTEXITCODE)" }
+        if (-not $pnpmOk) { throw "pnpm install failed after 2 attempts (exit $code)" }
+
+        # Production runtime: build once, then run `pnpm start` when the project
+        # defines a start script; fall back to `pnpm dev` only when it does not.
+        $Script:WorkspaceRunMode = 'dev'
+        $pkgPath = Join-Path $Script:WorkspaceDir 'package.json'
+        $buildCode = 1
+        try {
+            $pkg = Get-Content -LiteralPath $pkgPath -Raw -ErrorAction Stop | ConvertFrom-Json
+            if ($pkg.scripts -and $pkg.scripts.PSObject.Properties['build']) {
+                Write-Host '  pnpm build (production bundle)...'
+                $buildCode = Invoke-Native pnpm @('build') -IgnoreExitCode
+                if ($buildCode -ne 0) {
+                    Write-Host '  pnpm build failed - will run in dev mode' -ForegroundColor Yellow
+                }
+            }
+            if ($pkg.scripts -and $pkg.scripts.PSObject.Properties['start'] -and $buildCode -eq 0) {
+                $Script:WorkspaceRunMode = 'start'
+            }
+        } catch {
+            Write-Host '  package.json unreadable - workspace will run in dev mode' -ForegroundColor Yellow
+        }
+        Write-Host ("  Workspace run mode: pnpm {0}" -f $Script:WorkspaceRunMode) -ForegroundColor Green
+        Set-WorkspaceRunModeMarker $Script:WorkspaceRunMode
+        New-ComponentResult -Name 'workspace' `
+            -Outcome $(if ($clonedFresh) { $Script:OutcomeInstalled } else { $Script:OutcomeAlreadyPresent }) `
+            -Message ("dependencies installed; runMode={0}" -f $Script:WorkspaceRunMode)
     } finally {
         Pop-Location
     }
@@ -808,12 +901,29 @@ function Try-RegisterScheduledTask([string]$TaskName, [object]$Action, [object]$
     }
 }
 
+function Get-WorkspaceRunCommand {
+    $runMode = $Script:WorkspaceRunMode
+    if (-not $runMode) { $runMode = 'dev' }
+    # Persisted mode wins for scheduled tasks created on a previous install.
+    $marker = Join-Path $Script:WorkspaceDir '.hermes-run-mode'
+    if (Test-Path -LiteralPath $marker) {
+        $m = (Get-Content -LiteralPath $marker -Raw -ErrorAction SilentlyContinue)
+        if ($m) { $runMode = $m.Trim() }
+    }
+    return $runMode
+}
+
+function Set-WorkspaceRunModeMarker([string]$Mode) {
+    try { Write-Utf8NoBom -Path (Join-Path $Script:WorkspaceDir '.hermes-run-mode') -Content $Mode } catch { }
+}
+
 function Register-NativeTasks([string]$ApiKey, [string]$Password) {
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero)
 
-    $hermesExe = Get-Command hermes -ErrorAction SilentlyContinue
-    $hermesPath = Get-NativePath $hermesExe
+    # Resolve via Resolve-HermesCommand (not bare Get-Command): the user PATH of this
+    # process can be stale, which used to silently skip the HermesDashboard task.
+    $hermesPath = Resolve-HermesCommand
     if ($hermesPath) {
         $dashboardAction = New-ScheduledTaskAction -Execute $hermesPath -Argument 'dashboard start'
         $ok = Try-RegisterScheduledTask -TaskName 'HermesDashboard' -Action $dashboardAction -Trigger $trigger -Settings $settings
@@ -826,12 +936,15 @@ function Register-NativeTasks([string]$ApiKey, [string]$Password) {
     if (-not $pnpmCmd) { $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue }
     $pnpmPath = Get-NativePath $pnpmCmd
     if ($pnpmPath) {
-        $arg = '/c cd /d "{0}" && "{1}" dev' -f $Script:WorkspaceDir, $pnpmPath
-        $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument $arg -WorkingDirectory $Script:WorkspaceDir
+        $runMode = Get-WorkspaceRunCommand
+        # Hidden console at logon: powershell -WindowStyle Hidden instead of a visible cmd window.
+        $arg = '-NoProfile -WindowStyle Hidden -Command "Set-Location -LiteralPath ''{0}''; & ''{1}'' {2} *>> ''{3}''"' -f `
+            $Script:WorkspaceDir, $pnpmPath, $runMode, (Join-Path $Script:HermesHome 'workspace-autostart.log')
+        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg -WorkingDirectory $Script:WorkspaceDir
         $ok = Try-RegisterScheduledTask -TaskName 'HermesWorkspace' -Action $action -Trigger $trigger -Settings $settings
         if (-not $ok) {
             New-StartupCmd 'HermesWorkspace.cmd' (
-                "@echo off`r`ncd /d ""{0}""`r`n""{1}"" dev`r`n" -f $Script:WorkspaceDir, $pnpmPath
+                "@echo off`r`ncd /d ""{0}""`r`nstart """" /min ""{1}"" {2}`r`n" -f $Script:WorkspaceDir, $pnpmPath, $runMode
             )
         }
     }
@@ -843,10 +956,12 @@ function Start-WorkspaceDev {
     $pnpmPath = Get-NativePath $pnpmCmd
     if (-not $pnpmPath) { throw 'pnpm not found' }
 
+    $runMode = Get-WorkspaceRunCommand
+    Set-WorkspaceRunModeMarker $runMode
     $logOut = Join-Path $Script:HermesHome 'workspace-out.log'
     $logErr = Join-Path $Script:HermesHome 'workspace-err.log'
-    Write-Host ("  Starting workspace: {0} dev" -f $pnpmPath)
-    Start-Process -FilePath $pnpmPath -ArgumentList 'dev' `
+    Write-Host ("  Starting workspace: {0} {1}" -f $pnpmPath, $runMode)
+    Start-Process -FilePath $pnpmPath -ArgumentList $runMode `
         -WorkingDirectory $Script:WorkspaceDir `
         -WindowStyle Hidden `
         -RedirectStandardOutput $logOut `
@@ -879,6 +994,11 @@ function New-ConnectHtml(
     } else {
         '<p>Ollama was not detected - install it later if you want local models for Hermes.</p>'
     }
+    $transportLine = if ($TailscaleIp) {
+        '<p style="color:#7ee0a3">Transport: Tailscale encrypted tunnel (WireGuard).</p>'
+    } else {
+        '<p style="color:#f5c542"><strong>WARNING: LAN fallback uses plain HTTP - the pairing credentials in the QR code and API traffic are visible to anyone on this Wi-Fi network. Connect via Tailscale for encryption.</strong></p>'
+    }
     $html = @"
 <!DOCTYPE html>
 <html lang="en"><head>
@@ -895,7 +1015,7 @@ textarea{width:100%;box-sizing:border-box;background:#151b24;color:#d7e2ee;borde
 a.button{display:inline-block;margin-top:1rem;padding:12px 18px;background:#6366f1;color:#fff;text-decoration:none;border-radius:8px}
 .box{text-align:left;background:#151b24;border:1px solid #2a3544;border-radius:8px;padding:12px;margin-top:1.25rem}
 </style>
-<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script src="qrcode.min.js"></script>
 </head><body><main>
 $logoHtml
 <h1>Hermes Workspace - Quick Connect</h1>
@@ -906,6 +1026,7 @@ $logoHtml
 $tsLine
 <p>LAN IP (Wi-Fi fallback): <strong>$LanIp</strong></p>
 <p>Connect host in QR: <strong>$ConnectIp</strong></p>
+$transportLine
 <p>Gateway :8642 / Workspace :3000 / Agent dashboard :9119</p>
 <div class="box">
   <p><strong>Ollama + Hermes</strong></p>
@@ -945,7 +1066,7 @@ Ensure-WingetPackage 'OpenJS.NodeJS.LTS' 'node'
 Ensure-WingetPackage 'Git.Git' 'git'
 Ensure-Python
 Refresh-Path
-Write-Host ("  node: {0}" -f (node -v))
+$null = Invoke-Native node @('-v') -FailureMessage 'node -v failed after install'
 Ensure-Pnpm
 
 Write-Step 'Tailscale (phone connect via 100.x IP)'
@@ -980,8 +1101,18 @@ try {
     # so exit code alone is NOT proof of success. Capture output, then verify the
     # hermes launcher was actually staged under $HermesHome\bin.
     $agentLog = Join-Path $Script:HermesHome 'hermes-agent-install.log'
-    & $HermesAgentScriptPath -SkipSetup 2>&1 | Tee-Object -FilePath $agentLog
-    $agentExit = $LASTEXITCODE
+    $agentErrLog = Join-Path $Script:HermesHome 'hermes-agent-install-err.log'
+    # Run the third-party script in an isolated child process (same policy as MemOS):
+    # an upstream `exit`/trap must never kill the Hermes installer itself.
+    $agentProc = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $HermesAgentScriptPath, '-SkipSetup'
+    ) -Wait -PassThru -NoNewWindow `
+        -RedirectStandardOutput $agentLog `
+        -RedirectStandardError $agentErrLog
+    $agentExit = $agentProc.ExitCode
+    if (Test-Path $agentLog) {
+        Get-Content $agentLog -Tail 15 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+    }
     Refresh-Path
     $launcherStaged = [bool](Resolve-HermesCommand)
     if ($agentExit -ne 0 -or -not $launcherStaged) {
@@ -1031,8 +1162,8 @@ if ($Script:InstallObsidianSkills) {
 
 Write-Step 'Generating secrets'
 $existingHermesEnv = Read-DotEnvMap $Script:HermesEnv
-$apiKey = if ($existingHermesEnv['API_SERVER_KEY']) { $existingHermesEnv['API_SERVER_KEY'] } else { New-HexSecret }
-$hermesPassword = if ($existingHermesEnv['HERMES_PASSWORD']) { $existingHermesEnv['HERMES_PASSWORD'] } else { New-HexSecret }
+$Script:ApiKey = if ($existingHermesEnv['API_SERVER_KEY']) { $existingHermesEnv['API_SERVER_KEY'] } else { New-HexSecret }
+$Script:HermesPassword = if ($existingHermesEnv['HERMES_PASSWORD']) { $existingHermesEnv['HERMES_PASSWORD'] } else { New-HexSecret }
 if ($existingHermesEnv['API_SERVER_KEY']) {
     Write-Host '  Reusing existing API_SERVER_KEY (re-run safe)' -ForegroundColor Green
 }
@@ -1041,14 +1172,14 @@ if ($existingHermesEnv['HERMES_PASSWORD']) {
 }
 $envMap = Merge-DotEnv $Script:HermesEnv @{
     API_SERVER_ENABLED = 'true'
-    API_SERVER_KEY     = $apiKey
+    API_SERVER_KEY     = $Script:ApiKey
     API_SERVER_HOST    = '0.0.0.0'
     API_SERVER_PORT    = [string]$Script:GatewayPort
-    HERMES_PASSWORD    = $hermesPassword
+    HERMES_PASSWORD    = $Script:HermesPassword
     OLLAMA_HOST        = 'http://127.0.0.1:11434'
 } -PreserveKeys @('API_SERVER_KEY', 'HERMES_PASSWORD')
-$apiKey = if ($envMap['API_SERVER_KEY']) { $envMap['API_SERVER_KEY'] } else { $apiKey }
-$hermesPassword = if ($envMap['HERMES_PASSWORD']) { $envMap['HERMES_PASSWORD'] } else { $hermesPassword }
+if ($envMap['API_SERVER_KEY']) { $Script:ApiKey = $envMap['API_SERVER_KEY'] }
+if ($envMap['HERMES_PASSWORD']) { $Script:HermesPassword = $envMap['HERMES_PASSWORD'] }
 Write-Host "  Wrote $Script:HermesEnv"
 
 Write-Step 'Installing hermes-workspace (native Windows)'
@@ -1064,8 +1195,8 @@ HERMES_PUBLIC_API_URL=http://${publicHost}:$Script:GatewayPort
 HERMES_PUBLIC_WORKSPACE_URL=http://${publicHost}:$Script:WorkspacePort
 HERMES_PUBLIC_AGENT_DASHBOARD_URL=http://${publicHost}:$Script:DashboardPort
 HERMES_TAILSCALE_IP=$(if ($tailscaleIp) { $tailscaleIp } else { '' })
-HERMES_API_TOKEN=$apiKey
-HERMES_PASSWORD=$hermesPassword
+HERMES_API_TOKEN=$($Script:ApiKey)
+HERMES_PASSWORD=$($Script:HermesPassword)
 PORT=$Script:WorkspacePort
 COOKIE_SECURE=0
 HOST=0.0.0.0
@@ -1074,7 +1205,7 @@ Write-Utf8NoBom (Join-Path $Script:WorkspaceDir '.env') $wsEnv
 Write-Host ("  Wrote {0}\.env" -f $Script:WorkspaceDir)
 
 if ($Script:ConfigureFirewall) {
-    Write-Step 'Configuring Windows Firewall (private profile)'
+    Write-Step 'Configuring Windows Firewall (all network profiles)'
     $fw = Ensure-FirewallRules
     $fwOutcome = if ($fw.Added -gt 0) { $Script:OutcomeInstalled } elseif ($fw.Existing -gt 0) { $Script:OutcomeAlreadyPresent } else { $Script:OutcomeFailedSoft }
     New-ComponentResult -Name 'firewall' -Outcome $fwOutcome -Message ("added={0} existing={1}" -f $fw.Added, $fw.Existing) `
@@ -1087,7 +1218,7 @@ if ($Script:ConfigureFirewall) {
 # Autostart registration is independent from immediate service start.
 if ($Script:EnableAutoStart) {
     Write-Step 'Registering autostart (logon tasks / startup entries)'
-    Register-NativeTasks -ApiKey $apiKey -Password $hermesPassword
+    Register-NativeTasks -ApiKey $Script:ApiKey -Password $Script:HermesPassword
 } else {
     Write-Host '  Autostart registration disabled by setting.' -ForegroundColor DarkGray
 }
@@ -1208,13 +1339,26 @@ $payload = [ordered]@{
     dashboard = "http://${connectIp}:$Script:WorkspacePort"
     agentDashboard = "http://${connectIp}:$Script:DashboardPort"
     workspace = "http://${connectIp}:$Script:WorkspacePort"
-    apiKey = $apiKey
-    password = $hermesPassword
+    apiKey = $Script:ApiKey
+    password = $Script:HermesPassword
     tailscaleIp = if ($tailscaleIp) { $tailscaleIp } else { '' }
     exp = $connectExpiryEpoch
 } | ConvertTo-Json -Compress
 $connectCode = ConvertTo-Base64Url ([Text.Encoding]::UTF8.GetBytes($payload))
 $deepLink = "hermes://connect?data=$connectCode"
+
+# QR library is vendored locally at install time - connect.html contains secrets and
+# must never pull third-party JS from a CDN at view time (item: supply chain / QR page).
+$qrLibPath = Join-Path $Script:HermesHome 'qrcode.min.js'
+if (-not (Test-Path -LiteralPath $qrLibPath)) {
+    try {
+        $null = Get-CachedOrDownloadScript `
+            -Url 'https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js' `
+            -DestPath $qrLibPath -MinBytes 8000 -SanityPattern 'QRCode'
+    } catch {
+        Write-Host "  QR library download failed ($($_.Exception.Message)); connect page will show the code as text." -ForegroundColor Yellow
+    }
+}
 $connectHtml = Join-Path $Script:HermesHome 'connect.html'
 New-ConnectHtml -Path $connectHtml -DeepLink $deepLink -Code $connectCode `
     -ConnectIp $connectIp -LanIp $lanIp `

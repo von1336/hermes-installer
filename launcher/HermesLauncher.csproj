@@ -6,7 +6,7 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>HermesLauncher</AssemblyName>
     <RootNamespace>HermesLauncher</RootNamespace>
-    <Version>2026.8.31.1</Version>
+    <Version>2026.9.9</Version>
     <Authors>Hermes Workspace</Authors>
     <Description>Hermes Workspace Modern Launcher, Installer, and Service Manager</Description>
     <ApplicationIcon>..\assets\hermes-setup.ico</ApplicationIcon>

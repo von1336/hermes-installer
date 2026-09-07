@@ -56,8 +56,21 @@ function Redact-Secret([string]$Value) {
     return ('****' + $Value.Substring($Value.Length - 4))
 }
 
-function Write-InstallLog([string]$Message, [switch]$Secret) {
-    $line = if ($Secret) { Redact-Secret $Message } else { $Message }
+function Write-InstallLog {
+    param(
+        [string]$Message,
+        # Secret values to redact inside the message (rest of the text stays readable).
+        [string[]]$Secrets = @(),
+        [switch]$Secret
+    )
+    $line = $Message
+    $toRedact = @($Secrets)
+    if ($Secret) { $toRedact += $Message }
+    foreach ($sv in $toRedact) {
+        if (-not [string]::IsNullOrWhiteSpace($sv) -and $sv.Length -ge 6) {
+            $line = $line.Replace($sv, (Redact-Secret $sv))
+        }
+    }
     if ($Script:LogFile) {
         Add-Content -Path $Script:LogFile -Value ("[{0}] {1}" -f (Get-Date -Format o), $line) -ErrorAction SilentlyContinue
     }
@@ -194,16 +207,13 @@ function Ensure-TailscaleComponent {
             $status = & $tsExe status --json 2>$null | ConvertFrom-Json
             if (-not $status.Self -or $status.BackendState -ne 'Running') {
                 Write-Host '  Tailscale login may open in browser...' -ForegroundColor Yellow
-                Start-Process -FilePath $tsExe -ArgumentList 'up' -Wait -NoNewWindow
+                Invoke-TailscaleUp -TailscaleExe $tsExe -TimeoutSec 120
             }
         } else {
-            & tailscale up
+            Invoke-TailscaleUp -TailscaleExe 'tailscale' -TimeoutSec 120
         }
     } catch {
-        try {
-            if ($tsExe) { Start-Process -FilePath $tsExe -ArgumentList 'up' -Wait -NoNewWindow }
-            else { & tailscale up }
-        } catch { }
+        try { Invoke-TailscaleUp -TailscaleExe $(if ($tsExe) { $tsExe } else { 'tailscale' }) -TimeoutSec 60 } catch { }
     }
 
     $ip = $null
@@ -217,6 +227,19 @@ function Ensure-TailscaleComponent {
 
     New-ComponentResult -Name 'tailscale' -Outcome $Script:OutcomeFailedSoft -Message 'No 100.x IP yet'
     return $null
+}
+
+function Invoke-TailscaleUp {
+    # `tailscale up` can block indefinitely on interactive auth; never hang the installer.
+    param(
+        [string]$TailscaleExe,
+        [int]$TimeoutSec = 120
+    )
+    $proc = Start-Process -FilePath $TailscaleExe -ArgumentList 'up' -PassThru -NoNewWindow
+    if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
+        Write-Host ("  tailscale up timed out after {0}s - finish login manually" -f $TimeoutSec) -ForegroundColor Yellow
+        try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch { }
+    }
 }
 
 function Detect-Ollama {
@@ -443,6 +466,14 @@ function Detect-MemOS {
     }
 }
 
+function ConvertTo-YamlScalar([string]$Value) {
+    # Unquoted scalars break on '#', ':', leading/trailing spaces, etc.
+    # Emit a double-quoted YAML scalar with the minimal escape set.
+    if ($null -eq $Value) { return '""' }
+    $escaped = $Value -replace '\\', '\\' -replace '"', '\"'
+    return '"' + $escaped + '"'
+}
+
 function Set-YamlBlockField {
     param(
         [string]$Content,
@@ -450,15 +481,31 @@ function Set-YamlBlockField {
         [string]$Field,
         [string]$Value
     )
-    $blockPattern = "(?m)^${Block}:\s*\n(?:\s+.+\n)*"
-    if ($Content -notmatch "(?m)^${Block}:") {
-        return ($Content.TrimEnd() + "`n${Block}:`n  ${Field}: ${Value}`n")
+    $blockRx = [regex]::Escape($Block)
+    $fieldRx = [regex]::Escape($Field)
+    $scalar = ConvertTo-YamlScalar $Value
+
+    $blockHeader = "(?m)^${blockRx}:\s*$"
+    if ($Content -notmatch $blockHeader) {
+        return ($Content.TrimEnd() + "`n${Block}:`n  ${Field}: $scalar`n")
     }
-    $fieldPattern = "(?m)(^${Block}:[\s\S]*?\s*${Field}:\s*).*$"
-    if ($Content -match $fieldPattern) {
-        return [regex]::Replace($Content, $fieldPattern, "`${1}$Value", 1)
+
+    # Isolate the block body: lines after "block:" that are indented, stopping at the
+    # next top-level key. Field replacement NEVER crosses that boundary, so editing
+    # embedding:provider can no longer clobber llm:provider in another block.
+    $blockMatch = [regex]::Match($Content, "(?ms)^${blockRx}:\s*\r?\n((?:[ \t]+\S[^\r\n]*\r?\n?)*)")
+    if (-not $blockMatch.Success) {
+        # Block exists but has no body yet.
+        return [regex]::Replace($Content, $blockHeader, "`${0}`n  ${Field}: $scalar", 1)
     }
-    return [regex]::Replace($Content, "(?m)^(${Block}:\s*\n)", "`${1}  ${Field}: $Value`n", 1)
+    $body = $blockMatch.Groups[1].Value
+    $fieldInBody = "(?m)^([ \t]+${fieldRx}:\s*).*$"
+    $newBody = if ($body -match $fieldInBody) {
+        [regex]::Replace($body, $fieldInBody, "`${1}$scalar", 1)
+    } else {
+        $body + "  ${Field}: $scalar`n"
+    }
+    return $Content.Substring(0, $blockMatch.Groups[1].Index) + $newBody + $Content.Substring($blockMatch.Groups[1].Index + $body.Length)
 }
 
 function Set-MemOSConfigProfile {
@@ -473,7 +520,7 @@ function Set-MemOSConfigProfile {
 
     $configPath = Get-MemOSConfigPath
     if (-not (Test-Path $configPath)) {
-        Write-Host '  MemOS config.yaml not found --" skipping profile patch' -ForegroundColor Yellow
+        Write-Host '  MemOS config.yaml not found - skipping profile patch' -ForegroundColor Yellow
         return $false
     }
 
@@ -499,9 +546,9 @@ function Set-MemOSConfigProfile {
         $content = Set-YamlBlockField -Content $content -Block 'llm' -Field 'model' -Value $model
         if ($ProviderApiKey) {
             $content = Set-YamlBlockField -Content $content -Block 'llm' -Field 'apiKey' -Value $ProviderApiKey
-            Write-InstallLog -Message "MemOS provider key set: $(Redact-Secret $ProviderApiKey)" -Secret
+            Write-InstallLog -Message "MemOS provider key set: $ProviderApiKey" -Secrets @($ProviderApiKey)
         } else {
-            $content = Set-YamlBlockField -Content $content -Block 'llm' -Field 'apiKey' -Value '""'
+            $content = Set-YamlBlockField -Content $content -Block 'llm' -Field 'apiKey' -Value ''
         }
     }
 
@@ -554,7 +601,7 @@ function Ensure-MemOSComponent {
     $wasPresent = $detect.Installed
 
     if ($Mode -eq 'provider' -and [string]::IsNullOrWhiteSpace($ProviderApiKey)) {
-        Write-Host '  MemOS provider mode: API key missing --" continuing with degraded config' -ForegroundColor Yellow
+        Write-Host '  MemOS provider mode: API key missing - continuing with degraded config' -ForegroundColor Yellow
     }
 
     $installScriptUrl = 'https://raw.githubusercontent.com/MemTensor/MemOS/main/apps/memos-local-plugin/install.ps1'
@@ -604,7 +651,7 @@ function Ensure-MemOSComponent {
             return $false
         }
     } else {
-        Write-Host '  MemOS already installed --" applying profile only' -ForegroundColor Green
+        Write-Host '  MemOS already installed - applying profile only' -ForegroundColor Green
     }
 
     $detectAfter = Detect-MemOS
@@ -629,7 +676,7 @@ function Ensure-MemOSComponent {
     if ($Mode -eq 'provider' -and $ProviderApiKey) {
         $providerProbeOk = Test-MemOSProviderProbe -BaseUrl $ProviderBaseUrl -ApiKey $ProviderApiKey -Model $ProviderModel
         if (-not $providerProbeOk) {
-            Write-Host '  MemOS provider probe failed --" credentials may be invalid (soft fail)' -ForegroundColor Yellow
+            Write-Host '  MemOS provider probe failed - credentials may be invalid (soft fail)' -ForegroundColor Yellow
             $degraded = $true
         }
     } elseif ($Mode -eq 'provider' -and [string]::IsNullOrWhiteSpace($ProviderApiKey)) {
@@ -682,6 +729,9 @@ function Write-InstallManifest {
             obsidianSkills  = [bool]$Script:InstallObsidianSkills
             firewall        = [bool]$Script:ConfigureFirewall
             startServices   = [bool]$Script:StartServices
+            enableAutoStart = [bool]$Script:EnableAutoStart
+            createShortcuts = [bool]$Script:CreateShortcuts
+            workspaceRunMode = $Script:WorkspaceRunMode
         }
         components  = $Script:ComponentResults
         health      = $Extra

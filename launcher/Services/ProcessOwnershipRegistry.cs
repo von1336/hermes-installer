@@ -201,7 +201,20 @@ public static class ProcessOwnershipRegistry
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(RegistryPath)!);
+            if (records.Count == 0)
+            {
+                if (File.Exists(RegistryPath))
+                {
+                    try { File.Delete(RegistryPath); } catch { }
+                }
+                return;
+            }
+
+            var dir = Path.GetDirectoryName(RegistryPath)!;
+            if (!Directory.Exists(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
             File.WriteAllText(RegistryPath, JsonSerializer.Serialize(records), new UTF8Encoding(false));
         }
         catch { }

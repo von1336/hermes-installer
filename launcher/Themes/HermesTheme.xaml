@@ -345,7 +345,11 @@
                 <ControlTemplate TargetType="RadioButton">
                     <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="{StaticResource RadiusMd}" Margin="10,3" Padding="0">
                         <Grid>
-                            <Border x:Name="pill" Width="4" Height="24" Background="{StaticResource AccentPrimaryBrush}" CornerRadius="2" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="6,0,0,0" Visibility="Collapsed" />
+                            <Border x:Name="pill" Width="4" Height="24" Background="{StaticResource AccentPrimaryBrush}" CornerRadius="2" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="6,0,0,0" Visibility="Collapsed">
+                                <Border.Effect>
+                                    <DropShadowEffect Color="#38BDF8" BlurRadius="6" ShadowDepth="0" Opacity="0.85" />
+                                </Border.Effect>
+                            </Border>
                             <ContentPresenter VerticalAlignment="Center" Margin="20,0,12,0" RecognizesAccessKey="True" />
                         </Grid>
                     </Border>
@@ -370,8 +374,48 @@
         </Setter>
     </Style>
 
-    <Style x:Key="WizardStepRadioButton" TargetType="RadioButton" BasedOn="{StaticResource NavTabRadioButton}">
-        <Setter Property="MinHeight" Value="52" />
+    <Style x:Key="WizardStepRadioButton" TargetType="RadioButton">
+        <Setter Property="FontFamily" Value="{StaticResource MainFontFamily}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+        <Setter Property="Background" Value="#091220" />
+        <Setter Property="BorderBrush" Value="{StaticResource BorderCardBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="MinHeight" Value="46" />
+        <Setter Property="Margin" Value="4,0" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource FocusVisualStyle}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Border x:Name="stepBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{StaticResource RadiusSm}" Padding="12,10">
+                        <Grid>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True" />
+                            <Border x:Name="activeIndicator" Height="3" Background="{StaticResource AccentPrimaryBrush}" CornerRadius="1.5" VerticalAlignment="Bottom" Margin="4,0,4,-8" Visibility="Collapsed">
+                                <Border.Effect>
+                                    <DropShadowEffect Color="#38BDF8" BlurRadius="6" ShadowDepth="0" Opacity="0.9" />
+                                </Border.Effect>
+                            </Border>
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="stepBorder" Property="Background" Value="{StaticResource BgCardHoverBrush}" />
+                            <Setter TargetName="stepBorder" Property="BorderBrush" Value="#3B5278" />
+                            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="stepBorder" Property="Background" Value="{StaticResource BgCardSelectedBrush}" />
+                            <Setter TargetName="stepBorder" Property="BorderBrush" Value="{StaticResource AccentPrimaryBrush}" />
+                            <Setter Property="Foreground" Value="{StaticResource AccentPrimaryBrush}" />
+                            <Setter Property="FontWeight" Value="Bold" />
+                            <Setter TargetName="activeIndicator" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <Style x:Key="HermesProgressBar" TargetType="ProgressBar">
@@ -381,10 +425,14 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ProgressBar">
-                    <Border Background="{TemplateBinding Background}" CornerRadius="4" BorderBrush="{StaticResource BorderSubtleBrush}" BorderThickness="1">
-                        <Grid x:Name="TemplateRoot">
+                    <Border Background="{TemplateBinding Background}" CornerRadius="4" BorderBrush="{StaticResource BorderSubtleBrush}" BorderThickness="1" SnapsToDevicePixels="True">
+                        <Grid x:Name="TemplateRoot" ClipToBounds="True">
                             <Border x:Name="PART_Track" />
-                            <Border x:Name="PART_Indicator" HorizontalAlignment="Left" Background="{TemplateBinding Foreground}" CornerRadius="4" />
+                            <Border x:Name="PART_Indicator" HorizontalAlignment="Left" Background="{TemplateBinding Foreground}" CornerRadius="3">
+                                <Border.Effect>
+                                    <DropShadowEffect Color="#38BDF8" BlurRadius="6" ShadowDepth="0" Opacity="0.6" />
+                                </Border.Effect>
+                            </Border>
                         </Grid>
                     </Border>
                 </ControlTemplate>
@@ -405,15 +453,147 @@
         <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
         <Setter Property="RenderTransform">
             <Setter.Value>
-                <ScaleTransform ScaleX="1" ScaleY="1" />
+                <TranslateTransform Y="0" />
             </Setter.Value>
         </Setter>
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
                 <Setter Property="Background" Value="{StaticResource BgCardHoverBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource AccentPrimaryBrush}" />
+                <Trigger.EnterActions>
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                                             To="-3" Duration="0:0:0.18">
+                                <DoubleAnimation.EasingFunction>
+                                    <CubicEase EasingMode="EaseOut" />
+                                </DoubleAnimation.EasingFunction>
+                            </DoubleAnimation>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </Trigger.EnterActions>
+                <Trigger.ExitActions>
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                                             To="0" Duration="0:0:0.18">
+                                <DoubleAnimation.EasingFunction>
+                                    <CubicEase EasingMode="EaseOut" />
+                                </DoubleAnimation.EasingFunction>
+                            </DoubleAnimation>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </Trigger.ExitActions>
             </Trigger>
         </Style.Triggers>
+    </Style>
+
+    <Style x:Key="PulsingOnlineDot" TargetType="Ellipse">
+        <Setter Property="Width" Value="8" />
+        <Setter Property="Height" Value="8" />
+        <Setter Property="Fill" Value="{StaticResource StatusOnlineBrush}" />
+        <Setter Property="Effect">
+            <Setter.Value>
+                <DropShadowEffect Color="#34D399" BlurRadius="6" ShadowDepth="0" Opacity="0.75" />
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <EventTrigger RoutedEvent="Loaded">
+                <BeginStoryboard>
+                    <Storyboard RepeatBehavior="Forever">
+                        <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                         From="1.0" To="0.4" Duration="0:0:1.3"
+                                         AutoReverse="True">
+                            <DoubleAnimation.EasingFunction>
+                                <SineEase EasingMode="EaseInOut" />
+                            </DoubleAnimation.EasingFunction>
+                        </DoubleAnimation>
+                    </Storyboard>
+                </BeginStoryboard>
+            </EventTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="PulsingWarningDot" TargetType="Ellipse">
+        <Setter Property="Width" Value="8" />
+        <Setter Property="Height" Value="8" />
+        <Setter Property="Fill" Value="{StaticResource StatusWarningBrush}" />
+        <Setter Property="Effect">
+            <Setter.Value>
+                <DropShadowEffect Color="#FBBF24" BlurRadius="6" ShadowDepth="0" Opacity="0.8" />
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <EventTrigger RoutedEvent="Loaded">
+                <BeginStoryboard>
+                    <Storyboard RepeatBehavior="Forever">
+                        <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                         From="1.0" To="0.35" Duration="0:0:0.8"
+                                         AutoReverse="True">
+                            <DoubleAnimation.EasingFunction>
+                                <SineEase EasingMode="EaseInOut" />
+                            </DoubleAnimation.EasingFunction>
+                        </DoubleAnimation>
+                    </Storyboard>
+                </BeginStoryboard>
+            </EventTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="ServiceStatusDot" TargetType="Ellipse">
+        <Setter Property="Width" Value="8" />
+        <Setter Property="Height" Value="8" />
+        <Setter Property="Fill" Value="{StaticResource StatusOnlineBrush}" />
+        <Setter Property="Effect">
+            <Setter.Value>
+                <DropShadowEffect Color="#34D399" BlurRadius="6" ShadowDepth="0" Opacity="0.75" />
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <EventTrigger RoutedEvent="Loaded">
+                <BeginStoryboard>
+                    <Storyboard RepeatBehavior="Forever">
+                        <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                         From="1.0" To="0.4" Duration="0:0:1.4"
+                                         AutoReverse="True">
+                            <DoubleAnimation.EasingFunction>
+                                <SineEase EasingMode="EaseInOut" />
+                            </DoubleAnimation.EasingFunction>
+                        </DoubleAnimation>
+                    </Storyboard>
+                </BeginStoryboard>
+            </EventTrigger>
+            <DataTrigger Binding="{Binding IsOnline}" Value="False">
+                <Setter Property="Fill" Value="{StaticResource StatusOfflineBrush}" />
+                <Setter Property="Effect">
+                    <Setter.Value>
+                        <DropShadowEffect Color="#F87171" BlurRadius="3" ShadowDepth="0" Opacity="0.4" />
+                    </Setter.Value>
+                </Setter>
+                <Setter Property="Opacity" Value="0.85" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                <Setter Property="Fill" Value="{StaticResource StatusWarningBrush}" />
+                <Setter Property="Effect">
+                    <Setter.Value>
+                        <DropShadowEffect Color="#FBBF24" BlurRadius="6" ShadowDepth="0" Opacity="0.8" />
+                    </Setter.Value>
+                </Setter>
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="ToastCard" TargetType="Border">
+        <Setter Property="Background" Value="#101F35" />
+        <Setter Property="BorderBrush" Value="{StaticResource AccentPrimaryBrush}" />
+        <Setter Property="BorderThickness" Value="1.5" />
+        <Setter Property="CornerRadius" Value="12" />
+        <Setter Property="Padding" Value="16,10" />
+        <Setter Property="Effect">
+            <Setter.Value>
+                <DropShadowEffect Color="#000000" BlurRadius="16" ShadowDepth="4" Opacity="0.6" />
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <Style x:Key="PleasantOptionRow" TargetType="Border">
